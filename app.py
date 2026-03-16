@@ -111,13 +111,19 @@ chain_df["entry_price"] = np.where(
 )
 
 # Apply liquidity filter:
-#   • Live quotes: must have a valid positive spread within max_spread_pct threshold
-#   • Stale quotes (no live bid/ask): include if lastPrice > 0 — markets closed, best available data
+#   • Live quotes:  spread must be positive and within max_spread_pct threshold
+#   • Stale quotes: OI ≥ 10 (real accumulated interest) OR volume > 0 (traded today)
+#     — eliminates phantom data-artifact strikes (OI=0, volume≈2) while keeping
+#       genuinely traded strikes that haven't yet settled their OI
+_stale_liquid = (
+    chain_df["is_stale"] &
+    ((chain_df["openInterest"] >= 10) | (chain_df["volume"] > 0))
+)
 chain_liq = chain_df[
     (chain_df["mid"] > 0) &
     (
-        chain_df["is_stale"] |  # include stale (no spread to filter on)
-        ((chain_df["spread_pct"] > 0) & (chain_df["spread_pct"] <= max_spread_pct))
+        _stale_liquid |
+        ((~chain_df["is_stale"]) & (chain_df["spread_pct"] > 0) & (chain_df["spread_pct"] <= max_spread_pct))
     )
 ].copy()
 
