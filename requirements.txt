@@ -1,5 +1,6 @@
 streamlit>=1.40.0
-yfinance>=0.2.50
+yfinance>=1.0.0
+curl_cffi>=0.6.0
 pandas>=2.0.0
 numpy>=1.26.0
 plotly>=5.18.0
