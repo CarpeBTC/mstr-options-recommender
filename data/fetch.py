@@ -102,5 +102,24 @@ def get_strategy_holdings() -> Optional[dict]:
         return None
 
 
+@st.cache_data(ttl=600)  # refresh every 10 minutes — ~1 block interval
+def get_block_height_live() -> Optional[int]:
+    """Fetch current Bitcoin block height.
+    Tries mempool.space first, falls back to blockchain.info.
+    Returns None if both sources fail — callers should fall back to dead-reckoning.
+    """
+    for url in [
+        "https://mempool.space/api/blocks/tip/height",
+        "https://blockchain.info/q/getblockcount",
+    ]:
+        try:
+            req = _urlreq.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with _urlreq.urlopen(req, timeout=5) as r:
+                return int(r.read().decode().strip())
+        except Exception:
+            continue
+    return None
+
+
 def get_last_updated() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")

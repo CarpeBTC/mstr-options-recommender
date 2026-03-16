@@ -1,7 +1,8 @@
 import math
 from datetime import date
+from typing import Optional
 
-# Reference point from spreadsheet
+# Hardcoded fallback reference — used only when live block height fetch fails
 REF_DATE = date(2026, 3, 4)
 REF_BLOCK_HEIGHT = 940_267
 BLOCKS_PER_HOUR = 6
@@ -28,21 +29,26 @@ SCENARIO_PROBS = {
 }
 
 
-def get_block_height(target_date: date) -> int:
-    days_elapsed = (target_date - REF_DATE).days
-    return REF_BLOCK_HEIGHT + days_elapsed * BLOCKS_PER_DAY
+def get_block_height(target_date: date, ref_height: Optional[int] = None, ref_date: Optional[date] = None) -> int:
+    """Estimate block height at target_date by extrapolating from a reference point.
+    Pass ref_height + ref_date to use a live anchor; omit to use hardcoded fallback.
+    """
+    rh = ref_height if ref_height is not None else REF_BLOCK_HEIGHT
+    rd = ref_date  if ref_date  is not None else REF_DATE
+    days_elapsed = (target_date - rd).days
+    return rh + days_elapsed * BLOCKS_PER_DAY
 
 
-def get_btc_price(target_date: date) -> dict[str, float]:
-    height = get_block_height(target_date)
+def get_btc_price(target_date: date, ref_height: Optional[int] = None, ref_date: Optional[date] = None) -> dict[str, float]:
+    height = get_block_height(target_date, ref_height, ref_date)
     return {
         label: math.exp(intercept + slope * math.log(height))
         for label, (intercept, slope) in QUANTILES.items()
     }
 
 
-def get_scenario_prices(target_date: date) -> list[dict]:
-    prices = get_btc_price(target_date)
+def get_scenario_prices(target_date: date, ref_height: Optional[int] = None, ref_date: Optional[date] = None) -> list[dict]:
+    prices = get_btc_price(target_date, ref_height, ref_date)
     scenarios = []
     for label, prob in SCENARIO_PROBS.items():
         if label == "below_q01":

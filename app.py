@@ -6,7 +6,7 @@ import plotly.express as px
 from datetime import date, datetime, timedelta
 
 from functools import partial
-from data.fetch import get_mstr_price, get_available_expiries, get_option_chain, get_last_updated, get_btc_price_live, get_strategy_holdings
+from data.fetch import get_mstr_price, get_available_expiries, get_option_chain, get_last_updated, get_btc_price_live, get_strategy_holdings, get_block_height_live
 from models import jacobian, block_height
 from models.mstr import apply_mnav, btc_to_mstr
 from analytics.kelly import build_portfolio_metrics
@@ -69,6 +69,12 @@ _live_rdate = date.fromisoformat(_live_date) if _live_date else None
 _btc_to_mstr = partial(btc_to_mstr,  btc_holdings=_live_btc, diluted_shares_k=_live_shrs, ref_date=_live_rdate)
 _apply_mnav  = partial(apply_mnav,   btc_holdings=_live_btc, diluted_shares_k=_live_shrs, ref_date=_live_rdate)
 
+# Fetch live Bitcoin block height (mempool.space → blockchain.info → dead-reckoning fallback)
+_live_block_height = get_block_height_live()
+_block_ref_date    = today if _live_block_height is not None else None
+_get_bhm_price     = partial(block_height.get_btc_price,      ref_height=_live_block_height, ref_date=_block_ref_date)
+_get_bhm_scenarios = partial(block_height.get_scenario_prices, ref_height=_live_block_height, ref_date=_block_ref_date)
+
 expiry_options = [e for e in expiries if e >= "2026-06-01"]
 if not expiry_options:
     expiry_options = expiries
@@ -92,7 +98,7 @@ with st.spinner("Fetching option chain..."):
 # ── Compute Model Prices ──────────────────────────────────────────────────────
 
 j_scenarios_raw = jacobian.get_scenario_prices(expiry_date)
-b_scenarios_raw = block_height.get_scenario_prices(expiry_date)
+b_scenarios_raw = _get_bhm_scenarios(expiry_date)
 
 j_scenarios = _apply_mnav(j_scenarios_raw, expiry_date, mnav, btc_yield)
 b_scenarios = _apply_mnav(b_scenarios_raw, expiry_date, mnav, btc_yield)
@@ -235,7 +241,8 @@ with tab1:
     else:
         from models.mstr import BTC_HOLDINGS, FULLY_DILUTED_SHARES_K
         _src = f"Strategy BTC: {BTC_HOLDINGS:,} · Diluted Shares: {FULLY_DILUTED_SHARES_K:,}K (hardcoded fallback — strategy.com unavailable)"
-    st.caption(f"Data as of {get_last_updated()} | Model: Blended (Jacobian + Block Height) | {_src}")
+    _blk = f"Block Height: {_live_block_height:,} (live)" if _live_block_height else "Block Height: estimated (API unavailable)"
+    st.caption(f"Data as of {get_last_updated()} | Model: Blended (Jacobian + Block Height) | {_src} | {_blk}")
     st.markdown("---")
 
     # ── Price Targets Summary ──
@@ -243,9 +250,9 @@ with tab1:
 
     today = date.today()
     j_btc_today   = jacobian.get_btc_price(today)
-    b_btc_today   = block_height.get_btc_price(today)
+    b_btc_today   = _get_bhm_price(today)
     j_btc_expiry  = jacobian.get_btc_price(expiry_date)
-    b_btc_expiry  = block_height.get_btc_price(expiry_date)
+    b_btc_expiry  = _get_bhm_price(expiry_date)
     btc_live       = get_btc_price_live()   # current market BTC price (None on error)
 
     display_quantiles = ["q=0.01", "q=0.25", "OLS", "q=0.75", "q=0.99"]
@@ -433,7 +440,7 @@ with tab2:
     for q, color in zip(b_quants_to_plot, colors_b):
         prices_b = []
         for d in proj_dates:
-            bp = block_height.get_btc_price(d)
+            bp = _get_bhm_price(d)
             prices_b.append(bp.get(q, 0))
         fig_btc.add_trace(go.Scatter(
             x=proj_dates, y=prices_b, name=f"BHM {q}",
@@ -464,8 +471,8 @@ with tab2:
 
     j_mstr_targets = {q: _btc_to_mstr(jacobian.get_btc_price(expiry_date)[q], expiry_date, mnav, btc_yield)
                       for q in j_quants_to_plot}
-    b_mstr_targets = {q: _btc_to_mstr(block_height.get_btc_price(expiry_date).get(q, 0), expiry_date, mnav, btc_yield)
-                      for q in b_quants_to_plot if q in block_height.get_btc_price(expiry_date)}
+    b_mstr_targets = {q: _btc_to_mstr(_get_bhm_price(expiry_date).get(q, 0), expiry_date, mnav, btc_yield)
+                      for q in b_quants_to_plot if q in _get_bhm_price(expiry_date)}
 
     fig_mstr = go.Figure()
     fig_mstr.add_trace(go.Bar(
