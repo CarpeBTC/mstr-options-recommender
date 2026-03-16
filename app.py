@@ -30,7 +30,7 @@ if st.sidebar.button("🔄 Refresh Data", use_container_width=True):
 st.sidebar.markdown("---")
 
 bankroll = st.sidebar.number_input("Bankroll ($)", min_value=1000, max_value=10_000_000,
-                                    value=110_000, step=5_000)
+                                    value=10_000, step=1_000)
 # Expiry selectbox is filled after live data loads (needs available expiry list)
 expiry_placeholder = st.sidebar.empty()
 max_spread_pct = st.sidebar.slider("Max Spread % Filter", 5, 100, 50, 5,
@@ -228,10 +228,12 @@ with tab1:
             f"ℹ️ {stale_count} of {len(chain_liq)} strikes are using **last traded price** "
             f"(no live bid/ask). Spread filter applied only to {live_count} live quotes."
         )
-    if _holdings:
+    if _holdings and _holdings.get("source") == "live":
         _src = f"Strategy BTC: {_live_btc:,} · Diluted Shares: {_live_shrs:,}K (as of {_live_date}, strategy.com)"
+    elif _holdings and _holdings.get("source") == "cached":
+        _src = f"Strategy BTC: {_live_btc:,} · Diluted Shares: {_live_shrs:,}K (as of {_live_date}, last cached — strategy.com unavailable)"
     else:
-        from models.mstr import BTC_HOLDINGS, FULLY_DILUTED_SHARES_K, REF_DATE as _REF_DATE
+        from models.mstr import BTC_HOLDINGS, FULLY_DILUTED_SHARES_K
         _src = f"Strategy BTC: {BTC_HOLDINGS:,} · Diluted Shares: {FULLY_DILUTED_SHARES_K:,}K (hardcoded fallback — strategy.com unavailable)"
     st.caption(f"Data as of {get_last_updated()} | Model: Blended (Jacobian + Block Height) | {_src}")
     st.markdown("---")
@@ -322,8 +324,8 @@ with tab1:
     st.markdown("---")
     st.subheader(f"Portfolio Growth Metrics — {selected_expiry} Calls")
 
-    # Format for display — sort by Marg. Efficiency descending BEFORE index becomes string
-    display_df = metrics_df.copy().sort_values("Marg. Efficiency", ascending=False, na_position="last")
+    # Format for display — numeric columns stay numeric so column sorting works correctly
+    display_df = metrics_df.copy()
 
     # ── Replace unselected-model E[R] cols with q=0.25 / selected avg / q=0.75 ──────
     # Point return: what you'd earn IF the MSTR price hits exactly the q=X target
@@ -349,8 +351,10 @@ with tab1:
     display_df = display_df.drop(columns=[c for c in ["Jac E[R]", "BHM E[R]", "Blended E[R]"] if c in display_df.columns and c != _sel_er])
     # ─────────────────────────────────────────────────────────────────────────────────
 
+    # Strike index → formatted string (non-sortable, but index cols aren't clickable anyway)
     display_df.index = display_df.index.map("${:,.0f}".format)
-    display_df["Premium"] = display_df["Premium"].map("${:.2f}".format)
+
+    # Spread % stays a string (emoji prefix makes it inherently non-numeric)
     def _fmt_spread(row):
         x, stale = row["Spread %"], row["_is_stale"]
         if stale:
@@ -360,38 +364,42 @@ with tab1:
         return "—"
     display_df["Spread %"] = display_df.apply(_fmt_spread, axis=1)
     display_df = display_df.drop(columns=["_is_stale"], errors="ignore")
-    display_df["R @ q=0.25"] = display_df["R @ q=0.25"].map(
-        lambda x: f"{x:.2f}x" if pd.notna(x) else "—"
-    )
-    display_df[f"{_model_lbl} E[R]"] = display_df[f"{_model_lbl} E[R]"].map("{:.2f}x".format)
-    display_df["R @ q=0.75"] = display_df["R @ q=0.75"].map(
-        lambda x: f"{x:.2f}x" if pd.notna(x) else "—"
-    )
+
     # Keep only the selected model's Kelly f*; drop the other two
     _sel_kf = {"Jacobian": "Jac Kelly f*", "Block Height": "BHM Kelly f*", "Blended": "Blended Kelly f*"}[model_choice]
     display_df = display_df.rename(columns={_sel_kf: "Kelly f*"})
     display_df = display_df.drop(columns=[c for c in ["Jac Kelly f*", "BHM Kelly f*", "Blended Kelly f*"] if c in display_df.columns and c != _sel_kf])
-    display_df["Kelly f*"] = display_df["Kelly f*"].map("{:.1%}".format)
-    display_df["Adj. Kelly"] = display_df["Adj. Kelly"].map("{:.1%}".format)
-    display_df["$ Allocated"] = display_df["$ Allocated"].map("${:,.0f}".format)
-    display_df["Contracts"] = display_df["Contracts"].astype(int)
-    display_df["Marg. Efficiency"] = display_df["Marg. Efficiency"].map(
-        lambda x: f"{x:.3f}" if pd.notna(x) else "—"
-    )
-    display_df["Open Interest"] = display_df["Open Interest"].map("{:,}".format)
+
+    # Scale Kelly columns from fraction to percentage points (0.123 → 12.3) for display
+    display_df["Kelly f*"]   = display_df["Kelly f*"]   * 100
+    display_df["Adj. Kelly"] = display_df["Adj. Kelly"] * 100
+    display_df["Contracts"]  = display_df["Contracts"].astype(int)
+
     # Reorder: Premium → Marg. Efficiency → Spread % → Open Interest → R @ q=0.25 → {model} E[R] → R @ q=0.75 → rest
-    _er_cols = ["R @ q=0.25", f"{_model_lbl} E[R]", "R @ q=0.75"]
-    _front = ["Premium", "Marg. Efficiency", "Spread %", "Open Interest"]
+    _er_cols    = ["R @ q=0.25", f"{_model_lbl} E[R]", "R @ q=0.75"]
+    _front      = ["Premium", "Marg. Efficiency", "Spread %", "Open Interest"]
     _other_cols = [c for c in display_df.columns if c not in _front + _er_cols]
-    display_df = display_df[_front + _er_cols + _other_cols]
+    display_df  = display_df[_front + _er_cols + _other_cols]
 
     hurdle_er = 1 + r_period
-    st.dataframe(display_df, use_container_width=True, height=520)
+    _col_cfg = {
+        "Premium":              st.column_config.NumberColumn("Premium",              format="$%.2f"),
+        "Marg. Efficiency":     st.column_config.NumberColumn("Marg. Efficiency",     format="%.3f"),
+        "Open Interest":        st.column_config.NumberColumn("Open Interest",         format="%d"),
+        "R @ q=0.25":           st.column_config.NumberColumn("R @ q=0.25",           format="%.2fx"),
+        f"{_model_lbl} E[R]":   st.column_config.NumberColumn(f"{_model_lbl} E[R]",  format="%.2fx"),
+        "R @ q=0.75":           st.column_config.NumberColumn("R @ q=0.75",           format="%.2fx"),
+        "Kelly f*":             st.column_config.NumberColumn("Kelly f*",              format="%.1f%%"),
+        "Adj. Kelly":           st.column_config.NumberColumn("Adj. Kelly",            format="%.1f%%"),
+        "$ Allocated":          st.column_config.NumberColumn("$ Allocated",           format="$%.0f"),
+        "Contracts":            st.column_config.NumberColumn("Contracts",             format="%d"),
+    }
+    st.dataframe(display_df, use_container_width=True, height=520, column_config=_col_cfg)
     st.caption(
         f"Kelly f\\* uses excess returns (R − alt. hurdle) · "
         f"Alt. hurdle over holding period: {hurdle_er:.3f}x ({alt_return*100:.1f}%/yr × {T_years:.2f}yr) · "
         f"Entry price = ask · Spread %: 🟢<5% 🟡5–15% 🔴>15% · "
-        f"Sorted by Marg. Efficiency ↓"
+        f"Click any column header to sort"
     )
 
 

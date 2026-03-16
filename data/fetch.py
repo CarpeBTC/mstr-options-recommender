@@ -1,11 +1,14 @@
 import re as _re
 import json as _json
 import urllib.request as _urlreq
+from pathlib import Path as _Path
 import yfinance as yf
 import pandas as pd
 import streamlit as st
 from datetime import datetime
 from typing import Optional
+
+_HOLDINGS_CACHE_FILE = _Path(__file__).parent / ".holdings_cache.json"
 
 
 @st.cache_data(ttl=300)
@@ -48,8 +51,11 @@ def get_strategy_holdings() -> Optional[dict]:
         btc_holdings (int)    — total BTC held
         diluted_shares_k (int) — assumed diluted shares outstanding (thousands)
         as_of (str)            — date of the data (YYYY-MM-DD)
+        source (str)           — "live" | "cached"
 
-    Returns None on any failure — callers should fall back to hardcoded defaults.
+    On live-fetch failure, falls back to the last successfully cached values written
+    to .holdings_cache.json.  Returns None only if both the network AND the file
+    cache are unavailable — callers should then fall back to hardcoded defaults.
     """
     try:
         req = _urlreq.Request(
@@ -69,15 +75,30 @@ def get_strategy_holdings() -> Optional[dict]:
             text, _re.DOTALL,
         )
         if not match:
-            return None
+            raise ValueError("__NEXT_DATA__ not found")
         rows = _json.loads(match.group(1))["props"]["pageProps"]["shares"]
         latest = max(rows, key=lambda x: x.get("date", ""))
-        return {
+        data = {
             "btc_holdings":     int(latest["total_bitcoin_holdings"]),
             "diluted_shares_k": int(latest["assumed_diluted_shares_outstanding"]),
             "as_of":            latest["date"],
+            "source":           "live",
         }
+        # Persist last-known-good so future failures can fall back here
+        try:
+            _HOLDINGS_CACHE_FILE.write_text(_json.dumps(data))
+        except Exception:
+            pass
+        return data
     except Exception:
+        # Live fetch failed — return last cached values rather than hardcoded defaults
+        try:
+            if _HOLDINGS_CACHE_FILE.exists():
+                data = _json.loads(_HOLDINGS_CACHE_FILE.read_text())
+                data["source"] = "cached"
+                return data
+        except Exception:
+            pass
         return None
 
 
