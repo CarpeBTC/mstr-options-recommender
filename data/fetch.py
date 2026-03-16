@@ -24,7 +24,7 @@ def get_option_chain(expiry_str: str) -> pd.DataFrame:
     chain = ticker.option_chain(expiry_str)
     calls = chain.calls.copy()
     calls["mid"] = (calls["bid"] + calls["ask"]) / 2
-    return calls[["strike", "bid", "ask", "mid", "volume", "openInterest", "impliedVolatility"]].copy()
+    return calls[["strike", "lastPrice", "bid", "ask", "mid", "volume", "openInterest", "impliedVolatility"]].copy()
 
 
 @st.cache_data(ttl=300)

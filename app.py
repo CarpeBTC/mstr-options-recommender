@@ -86,25 +86,39 @@ b_scenarios = apply_mnav(b_scenarios_raw, expiry_date, mnav, btc_yield)
 
 # ── Spread % and Entry Price ──────────────────────────────────────────────────
 
-# Spread % = (ask − bid) / mid — liquidity indicator; lower = tighter market
-# Negative spreads (bid > ask) indicate crossed/stale quotes — treated as bad data
+# Detect stale quotes: bid/ask = 0 but lastPrice exists (markets closed / after-hours)
+chain_df["is_stale"] = (chain_df["bid"] == 0) | (chain_df["ask"] == 0)
+
+# Mid price: use live bid/ask average when available; fall back to lastPrice when markets closed
+chain_df["mid"] = np.where(
+    ~chain_df["is_stale"] & (chain_df["bid"] > 0) & (chain_df["ask"] > 0),
+    (chain_df["bid"] + chain_df["ask"]) / 2,
+    chain_df["lastPrice"],
+)
+
+# Spread % = (ask − bid) / mid — only meaningful for live quotes
+# Negative spreads (bid > ask) = crossed/stale quotes → NaN; stale quotes → NaN
 _raw_spread = np.where(
-    chain_df["mid"] > 0,
+    ~chain_df["is_stale"] & (chain_df["mid"] > 0),
     (chain_df["ask"] - chain_df["bid"]) / chain_df["mid"] * 100,
     np.nan,
 )
 chain_df["spread_pct"] = np.where(_raw_spread > 0, _raw_spread, np.nan)
 
-# Entry price = ask (realistic fill); fall back to mid if ask is missing/zero
+# Entry price = ask (live fill); fall back to lastPrice for stale quotes
 chain_df["entry_price"] = np.where(
-    chain_df["ask"] > 0, chain_df["ask"], chain_df["mid"]
+    chain_df["ask"] > 0, chain_df["ask"], chain_df["lastPrice"]
 )
 
-# Apply liquidity filter — keep only strikes with a valid positive spread within max_spread_pct
+# Apply liquidity filter:
+#   • Live quotes: must have a valid positive spread within max_spread_pct threshold
+#   • Stale quotes (no live bid/ask): include if lastPrice > 0 — markets closed, best available data
 chain_liq = chain_df[
     (chain_df["mid"] > 0) &
-    (chain_df["spread_pct"] > 0) &
-    (chain_df["spread_pct"] <= max_spread_pct)
+    (
+        chain_df["is_stale"] |  # include stale (no spread to filter on)
+        ((chain_df["spread_pct"] > 0) & (chain_df["spread_pct"] <= max_spread_pct))
+    )
 ].copy()
 
 # ── Build Option Premiums Dict (ask price, liquid strikes only) ───────────────
@@ -125,9 +139,11 @@ metrics_df = build_portfolio_metrics(
     strikes, premiums, j_scenarios, b_scenarios, kelly_frac, bankroll, r_period
 )
 
-# Attach Spread % from full chain (even for strikes kept after filter)
+# Attach Spread % and stale flag from full chain
 _spread_map = dict(zip(chain_df["strike"], chain_df["spread_pct"]))
+_stale_map  = dict(zip(chain_df["strike"], chain_df["is_stale"]))
 metrics_df["Spread %"] = metrics_df.index.map(_spread_map)
+metrics_df["_is_stale"] = metrics_df.index.map(_stale_map).fillna(False)
 
 # Attach Marginal Return Efficiency column (Blended E[R] basis, strikes sorted ascending)
 _mdf_s = metrics_df["Blended E[R]"].sort_index()
@@ -178,6 +194,19 @@ with tab1:
     col3.metric("mNAV Multiplier", f"{mnav:.1f}x")
     col4.metric("Bankroll", f"${bankroll:,.0f}")
 
+    stale_count = int(chain_liq["is_stale"].sum()) if "is_stale" in chain_liq.columns else 0
+    live_count  = len(chain_liq) - stale_count
+    if stale_count > 0 and live_count == 0:
+        st.warning(
+            f"⚠️ **Markets closed** — no live bid/ask quotes available. "
+            f"All {stale_count} strikes are showing **last traded price** (stale). "
+            f"Recommendations are based on last-trade data; check again during market hours for live spreads."
+        )
+    elif stale_count > 0:
+        st.info(
+            f"ℹ️ {stale_count} of {len(chain_liq)} strikes are using **last traded price** "
+            f"(no live bid/ask). Spread filter applied only to {live_count} live quotes."
+        )
     st.caption(f"Data as of {get_last_updated()} | Model: Blended (Jacobian + Block Height)")
     st.markdown("---")
 
@@ -296,10 +325,15 @@ with tab1:
 
     display_df.index = display_df.index.map("${:,.0f}".format)
     display_df["Premium"] = display_df["Premium"].map("${:.2f}".format)
-    display_df["Spread %"] = display_df["Spread %"].map(
-        lambda x: ("🟢 " if x < 5 else "🟡 " if x < 15 else "🔴 ") + f"{x:.1f}%"
-        if pd.notna(x) else "—"
-    )
+    def _fmt_spread(row):
+        x, stale = row["Spread %"], row["_is_stale"]
+        if stale:
+            return "⚪ Stale"
+        if pd.notna(x):
+            return ("🟢 " if x < 5 else "🟡 " if x < 15 else "🔴 ") + f"{x:.1f}%"
+        return "—"
+    display_df["Spread %"] = display_df.apply(_fmt_spread, axis=1)
+    display_df = display_df.drop(columns=["_is_stale"], errors="ignore")
     display_df["R @ q=0.25"] = display_df["R @ q=0.25"].map(
         lambda x: f"{x:.2f}x" if pd.notna(x) else "—"
     )
@@ -422,14 +456,16 @@ with tab2:
     display_chain = display_chain[display_chain["strike"].between(
         mstr_price * 0.5, mstr_price * 8
     )]
-    display_chain["spread_pct_fmt"] = display_chain["spread_pct"].map(
-        lambda x: ("🟢 " if x < 5 else "🟡 " if x < 15 else "🔴 ") + f"{x:.1f}%"
-        if pd.notna(x) else "—"
+    display_chain["spread_pct_fmt"] = display_chain.apply(
+        lambda r: "⚪ Stale" if r.get("is_stale", False)
+        else (("🟢 " if r["spread_pct"] < 5 else "🟡 " if r["spread_pct"] < 15 else "🔴 ") + f"{r['spread_pct']:.1f}%")
+        if pd.notna(r["spread_pct"]) else "—",
+        axis=1,
     )
     display_chain["strike"] = display_chain["strike"].map("${:,.0f}".format)
-    display_chain["bid"] = display_chain["bid"].map("${:.2f}".format)
+    display_chain["bid"] = display_chain["bid"].map(lambda x: f"${x:.2f}" if x > 0 else "—")
     display_chain["mid"] = display_chain["mid"].map("${:.2f}".format)
-    display_chain["ask"] = display_chain["ask"].map("${:.2f}".format)
+    display_chain["ask"] = display_chain["ask"].map(lambda x: f"${x:.2f}" if x > 0 else "—")
     display_chain["impliedVolatility"] = (display_chain["impliedVolatility"] * 100).map("{:.1f}%".format)
     display_chain = display_chain.rename(columns={
         "strike": "Strike", "bid": "Bid", "mid": "Mid", "ask": "Ask",
