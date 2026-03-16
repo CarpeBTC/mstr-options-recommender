@@ -1,3 +1,6 @@
+import re as _re
+import json as _json
+import urllib.request as _urlreq
 import yfinance as yf
 import pandas as pd
 import streamlit as st
@@ -33,6 +36,47 @@ def get_btc_price_live() -> Optional[float]:
     try:
         ticker = yf.Ticker("BTC-USD")
         return float(ticker.fast_info.last_price)
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=3600)  # refresh hourly — strategy.com updates daily
+def get_strategy_holdings() -> Optional[dict]:
+    """Fetch latest BTC holdings and assumed diluted shares from strategy.com/shares.
+
+    Returns dict with keys:
+        btc_holdings (int)    — total BTC held
+        diluted_shares_k (int) — assumed diluted shares outstanding (thousands)
+        as_of (str)            — date of the data (YYYY-MM-DD)
+
+    Returns None on any failure — callers should fall back to hardcoded defaults.
+    """
+    try:
+        req = _urlreq.Request(
+            "https://www.strategy.com/shares",
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                )
+            },
+        )
+        with _urlreq.urlopen(req, timeout=10) as r:
+            text = r.read().decode("utf-8", errors="ignore")
+        match = _re.search(
+            r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>',
+            text, _re.DOTALL,
+        )
+        if not match:
+            return None
+        rows = _json.loads(match.group(1))["props"]["pageProps"]["shares"]
+        latest = max(rows, key=lambda x: x.get("date", ""))
+        return {
+            "btc_holdings":     int(latest["total_bitcoin_holdings"]),
+            "diluted_shares_k": int(latest["assumed_diluted_shares_outstanding"]),
+            "as_of":            latest["date"],
+        }
     except Exception:
         return None
 

@@ -5,7 +5,8 @@ import plotly.graph_objects as go
 import plotly.express as px
 from datetime import date, datetime, timedelta
 
-from data.fetch import get_mstr_price, get_available_expiries, get_option_chain, get_last_updated, get_btc_price_live
+from functools import partial
+from data.fetch import get_mstr_price, get_available_expiries, get_option_chain, get_last_updated, get_btc_price_live, get_strategy_holdings
 from models import jacobian, block_height
 from models.mstr import apply_mnav, btc_to_mstr
 from analytics.kelly import build_portfolio_metrics
@@ -56,6 +57,18 @@ with st.spinner("Fetching MSTR data..."):
         st.error(f"Failed to fetch data: {e}")
         st.stop()
 
+# Fetch live Strategy holdings (BTC + diluted shares) from strategy.com/shares
+# Falls back to hardcoded defaults in models/mstr.py if the fetch fails
+_holdings = get_strategy_holdings()
+_live_btc   = _holdings["btc_holdings"]     if _holdings else None
+_live_shrs  = _holdings["diluted_shares_k"] if _holdings else None
+_live_date  = _holdings["as_of"]            if _holdings else None
+_live_rdate = date.fromisoformat(_live_date) if _live_date else None
+
+# Partial wrappers that bake in the live holdings — all model calls use these
+_btc_to_mstr = partial(btc_to_mstr,  btc_holdings=_live_btc, diluted_shares_k=_live_shrs, ref_date=_live_rdate)
+_apply_mnav  = partial(apply_mnav,   btc_holdings=_live_btc, diluted_shares_k=_live_shrs, ref_date=_live_rdate)
+
 expiry_options = [e for e in expiries if e >= "2026-06-01"]
 if not expiry_options:
     expiry_options = expiries
@@ -81,8 +94,8 @@ with st.spinner("Fetching option chain..."):
 j_scenarios_raw = jacobian.get_scenario_prices(expiry_date)
 b_scenarios_raw = block_height.get_scenario_prices(expiry_date)
 
-j_scenarios = apply_mnav(j_scenarios_raw, expiry_date, mnav, btc_yield)
-b_scenarios = apply_mnav(b_scenarios_raw, expiry_date, mnav, btc_yield)
+j_scenarios = _apply_mnav(j_scenarios_raw, expiry_date, mnav, btc_yield)
+b_scenarios = _apply_mnav(b_scenarios_raw, expiry_date, mnav, btc_yield)
 
 # ── Spread % and Entry Price ──────────────────────────────────────────────────
 
@@ -215,7 +228,12 @@ with tab1:
             f"ℹ️ {stale_count} of {len(chain_liq)} strikes are using **last traded price** "
             f"(no live bid/ask). Spread filter applied only to {live_count} live quotes."
         )
-    st.caption(f"Data as of {get_last_updated()} | Model: Blended (Jacobian + Block Height)")
+    if _holdings:
+        _src = f"Strategy BTC: {_live_btc:,} · Diluted Shares: {_live_shrs:,}K (as of {_live_date}, strategy.com)"
+    else:
+        from models.mstr import BTC_HOLDINGS, FULLY_DILUTED_SHARES_K, REF_DATE as _REF_DATE
+        _src = f"Strategy BTC: {BTC_HOLDINGS:,} · Diluted Shares: {FULLY_DILUTED_SHARES_K:,}K (hardcoded fallback — strategy.com unavailable)"
+    st.caption(f"Data as of {get_last_updated()} | Model: Blended (Jacobian + Block Height) | {_src}")
     st.markdown("---")
 
     # ── Price Targets Summary ──
@@ -284,9 +302,9 @@ with tab1:
     # Quantile rows
     for q in display_quantiles:
         btc_t  = _model_btc(j_btc_today,  b_btc_today,  q)
-        mstr_t = btc_to_mstr(btc_t,  today,       mnav, btc_yield) if btc_t  else None
+        mstr_t = _btc_to_mstr(btc_t,  today,       mnav, btc_yield) if btc_t  else None
         btc_e  = _model_btc(j_btc_expiry, b_btc_expiry, q)
-        mstr_e = btc_to_mstr(btc_e,  expiry_date, mnav, btc_yield) if btc_e  else None
+        mstr_e = _btc_to_mstr(btc_e,  expiry_date, mnav, btc_yield) if btc_e  else None
         target_rows.append({
             "Scenario":   q,
             "_sort_q":    _q_nums[q],
@@ -311,8 +329,8 @@ with tab1:
     # Point return: what you'd earn IF the MSTR price hits exactly the q=X target
     _btc_q25_d = _model_btc(j_btc_expiry, b_btc_expiry, "q=0.25")
     _btc_q75_d = _model_btc(j_btc_expiry, b_btc_expiry, "q=0.75")
-    _mstr_q25_d = btc_to_mstr(_btc_q25_d, expiry_date, mnav, btc_yield) if _btc_q25_d else None
-    _mstr_q75_d = btc_to_mstr(_btc_q75_d, expiry_date, mnav, btc_yield) if _btc_q75_d else None
+    _mstr_q25_d = _btc_to_mstr(_btc_q25_d, expiry_date, mnav, btc_yield) if _btc_q25_d else None
+    _mstr_q75_d = _btc_to_mstr(_btc_q75_d, expiry_date, mnav, btc_yield) if _btc_q75_d else None
 
     def _pt_r(mstr_tgt, strike, prem):
         return (mstr_tgt - strike) / prem - 1 if (mstr_tgt and mstr_tgt > strike and prem > 0) else -1.0
@@ -436,9 +454,9 @@ with tab2:
     # ── MSTR Price at Expiry ──
     st.subheader(f"MSTR Price Targets at Expiry ({selected_expiry})")
 
-    j_mstr_targets = {q: btc_to_mstr(jacobian.get_btc_price(expiry_date)[q], expiry_date, mnav, btc_yield)
+    j_mstr_targets = {q: _btc_to_mstr(jacobian.get_btc_price(expiry_date)[q], expiry_date, mnav, btc_yield)
                       for q in j_quants_to_plot}
-    b_mstr_targets = {q: btc_to_mstr(block_height.get_btc_price(expiry_date).get(q, 0), expiry_date, mnav, btc_yield)
+    b_mstr_targets = {q: _btc_to_mstr(block_height.get_btc_price(expiry_date).get(q, 0), expiry_date, mnav, btc_yield)
                       for q in b_quants_to_plot if q in block_height.get_btc_price(expiry_date)}
 
     fig_mstr = go.Figure()
