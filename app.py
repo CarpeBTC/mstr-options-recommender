@@ -145,11 +145,13 @@ metrics_df = build_portfolio_metrics(
     strikes, premiums, j_scenarios, b_scenarios, kelly_frac, bankroll, r_period
 )
 
-# Attach Spread % and stale flag from full chain
+# Attach Spread %, stale flag, and Open Interest from full chain
 _spread_map = dict(zip(chain_df["strike"], chain_df["spread_pct"]))
 _stale_map  = dict(zip(chain_df["strike"], chain_df["is_stale"]))
-metrics_df["Spread %"] = metrics_df.index.map(_spread_map)
-metrics_df["_is_stale"] = metrics_df.index.map(_stale_map).fillna(False)
+_oi_map     = dict(zip(chain_df["strike"], chain_df["openInterest"]))
+metrics_df["Spread %"]      = metrics_df.index.map(_spread_map)
+metrics_df["_is_stale"]     = metrics_df.index.map(_stale_map).fillna(False)
+metrics_df["Open Interest"] = metrics_df.index.map(_oi_map).fillna(0).astype(int)
 
 # Attach Marginal Return Efficiency column (Blended E[R] basis, strikes sorted ascending)
 _mdf_s = metrics_df["Blended E[R]"].sort_index()
@@ -358,9 +360,10 @@ with tab1:
     display_df["Marg. Efficiency"] = display_df["Marg. Efficiency"].map(
         lambda x: f"{x:.3f}" if pd.notna(x) else "—"
     )
-    # Reorder: Premium → Marg. Efficiency → Spread % → R @ q=0.25 → {model} E[R] → R @ q=0.75 → rest
+    display_df["Open Interest"] = display_df["Open Interest"].map("{:,}".format)
+    # Reorder: Premium → Marg. Efficiency → Spread % → Open Interest → R @ q=0.25 → {model} E[R] → R @ q=0.75 → rest
     _er_cols = ["R @ q=0.25", f"{_model_lbl} E[R]", "R @ q=0.75"]
-    _front = ["Premium", "Marg. Efficiency", "Spread %"]
+    _front = ["Premium", "Marg. Efficiency", "Spread %", "Open Interest"]
     _other_cols = [c for c in display_df.columns if c not in _front + _er_cols]
     display_df = display_df[_front + _er_cols + _other_cols]
 
