@@ -1,0 +1,11 @@
+# Claude Code local config
+.claude/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# macOS
+.DS_Store
