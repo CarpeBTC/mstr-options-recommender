@@ -71,7 +71,7 @@ _apply_mnav  = partial(apply_mnav,   btc_holdings=_live_btc, diluted_shares_k=_l
 
 # Fetch live Bitcoin block height (mempool.space → blockchain.info → dead-reckoning fallback)
 _live_block_height = get_block_height_live()
-_block_ref_date    = today if _live_block_height is not None else None
+_block_ref_date    = date.today() if _live_block_height is not None else None
 _get_bhm_price     = partial(block_height.get_btc_price,      ref_height=_live_block_height, ref_date=_block_ref_date)
 _get_bhm_scenarios = partial(block_height.get_scenario_prices, ref_height=_live_block_height, ref_date=_block_ref_date)
 
