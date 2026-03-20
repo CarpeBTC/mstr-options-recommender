@@ -9,7 +9,7 @@ REF_DATE = date(2026, 3, 4)
 
 def _btc_per_share(
     target_date: date,
-    btc_yield_yr1: float = 0.15,
+    btc_yield_yr1: float = 0.10,
     btc_holdings: Optional[int] = None,
     diluted_shares_k: Optional[int] = None,
     ref_date: Optional[date] = None,
@@ -30,7 +30,7 @@ def _btc_per_share(
 def btc_to_mstr_1x_mnav(
     btc_price: float,
     target_date: date,
-    btc_yield_yr1: float = 0.15,
+    btc_yield_yr1: float = 0.10,
     btc_holdings: Optional[int] = None,
     diluted_shares_k: Optional[int] = None,
     ref_date: Optional[date] = None,
@@ -47,7 +47,7 @@ def btc_to_mstr(
     btc_price: float,
     target_date: date,
     mnav_multiplier: float = 1.5,
-    btc_yield_yr1: float = 0.15,
+    btc_yield_yr1: float = 0.10,
     btc_holdings: Optional[int] = None,
     diluted_shares_k: Optional[int] = None,
     ref_date: Optional[date] = None,
@@ -62,7 +62,7 @@ def apply_mnav(
     scenarios: list,
     target_date: date,
     mnav_multiplier: float = 1.5,
-    btc_yield_yr1: float = 0.15,
+    btc_yield_yr1: float = 0.10,
     btc_holdings: Optional[int] = None,
     diluted_shares_k: Optional[int] = None,
     ref_date: Optional[date] = None,

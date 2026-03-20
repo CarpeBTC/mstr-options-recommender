@@ -45,7 +45,7 @@ kelly_frac = st.sidebar.slider("Kelly Fraction", 0.1, 1.0, 0.5, 0.05,
                                 help="0.5 = half-Kelly (recommended)")
 model_choice = st.sidebar.selectbox("Price Model", ["Blended", "Jacobian", "Block Height"])
 st.sidebar.markdown("---")
-btc_yield = st.sidebar.slider("MSTR BTC Yield Yr 1 (%)", 0, 30, 15, 1) / 100
+btc_yield = st.sidebar.slider("MSTR BTC Yield Yr 1 (%)", 0, 30, 10, 1) / 100
 
 # ── Load Live Data ────────────────────────────────────────────────────────────
 
