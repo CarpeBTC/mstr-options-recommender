@@ -88,6 +88,7 @@ if btc_live and _live_btc and _live_shrs and mstr_price:
     _current_mnav = (mstr_price * _live_shrs * 1000) / (btc_live * _live_btc)
     _mnav_live_caption.caption(f"📍 Current: **{_current_mnav:.2f}x** (live)")
 else:
+    _current_mnav = mnav  # fall back to slider value if live data unavailable
     _mnav_live_caption.caption("📍 Current mNAV: unavailable")
 
 # Fetch live Bitcoin block height (mempool.space → blockchain.info → dead-reckoning fallback)
@@ -332,7 +333,7 @@ with tab1:
     # Quantile rows
     for q in display_quantiles:
         btc_t  = _model_btc(j_btc_today,  b_btc_today,  q)
-        mstr_t = _btc_to_mstr(btc_t,  today,       mnav, btc_yield) if btc_t  else None
+        mstr_t = _btc_to_mstr(btc_t,  today,       _current_mnav, btc_yield) if btc_t  else None
         btc_e  = _model_btc(j_btc_expiry, b_btc_expiry, q)
         mstr_e = _btc_to_mstr(btc_e,  expiry_date, mnav, btc_yield) if btc_e  else None
         target_rows.append({
