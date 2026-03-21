@@ -42,11 +42,10 @@ alt_return = st.sidebar.slider("Alt. Return (Annual %)", -10.0, 15.0, 4.3, 0.1,
                                      "-10% = cost of a loan)") / 100
 mnav = st.sidebar.slider(
     "mNAV — Forward Estimate (Market Cap ÷ BTC NAV)",
-    1.0, 3.0, 1.5, 0.1,
+    0.5, 3.0, 1.5, 0.1,
     help=(
         "**mNAV = Market Cap ÷ BTC NAV** (not Enterprise Value — this excludes debt, "
         "unlike the EV/NAV ratio shown on strategy.com).\n\n"
-        "**Current:** ~0.87x\n\n"
         "**Historical range:** 0.75x – 2.7x\n\n"
         "**Scenario guidance:**\n"
         "- 🐻 Bear: 0.8x – 1.0x\n"
@@ -54,6 +53,7 @@ mnav = st.sidebar.slider(
         "- 🐂 Bull: 2.0x – 3.0x"
     ),
 )
+_mnav_live_caption = st.sidebar.empty()
 kelly_frac = st.sidebar.slider("Kelly Fraction", 0.1, 1.0, 0.5, 0.05,
                                 help="0.5 = half-Kelly (recommended)")
 model_choice = st.sidebar.selectbox("Price Model", ["Blended", "Jacobian", "Block Height"])
@@ -66,6 +66,7 @@ with st.spinner("Fetching MSTR data..."):
     try:
         mstr_price = get_mstr_price()
         expiries = get_available_expiries()
+        btc_live = get_btc_price_live()
     except Exception as e:
         st.error(f"Failed to fetch data: {e}")
         st.stop()
@@ -81,6 +82,13 @@ _live_rdate = date.fromisoformat(_live_date) if _live_date else None
 # Partial wrappers that bake in the live holdings — all model calls use these
 _btc_to_mstr = partial(btc_to_mstr,  btc_holdings=_live_btc, diluted_shares_k=_live_shrs, ref_date=_live_rdate)
 _apply_mnav  = partial(apply_mnav,   btc_holdings=_live_btc, diluted_shares_k=_live_shrs, ref_date=_live_rdate)
+
+# Fill the mNAV live caption now that we have price + holdings data
+if btc_live and _live_btc and _live_shrs and mstr_price:
+    _current_mnav = (mstr_price * _live_shrs * 1000) / (btc_live * _live_btc)
+    _mnav_live_caption.caption(f"📍 Current: **{_current_mnav:.2f}x** (live)")
+else:
+    _mnav_live_caption.caption("📍 Current mNAV: unavailable")
 
 # Fetch live Bitcoin block height (mempool.space → blockchain.info → dead-reckoning fallback)
 _live_block_height = get_block_height_live()
@@ -266,7 +274,7 @@ with tab1:
     b_btc_today   = _get_bhm_price(today)
     j_btc_expiry  = jacobian.get_btc_price(expiry_date)
     b_btc_expiry  = _get_bhm_price(expiry_date)
-    btc_live       = get_btc_price_live()   # current market BTC price (None on error)
+    # btc_live already fetched at startup
 
     display_quantiles = ["q=0.01", "q=0.25", "OLS", "q=0.75", "q=0.99"]
     _q_nums = {"q=0.01": 0.01, "q=0.25": 0.25, "OLS": 0.50, "q=0.75": 0.75, "q=0.99": 0.99}
