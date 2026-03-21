@@ -40,7 +40,20 @@ alt_return = st.sidebar.slider("Alt. Return (Annual %)", -10.0, 15.0, 4.3, 0.1,
                                 help="Expected annual return on non-invested capital "
                                      "(e.g. 4.3% = 10Y Treasury, 11.5% = STRC, "
                                      "-10% = cost of a loan)") / 100
-mnav = st.sidebar.slider("mNAV Multiplier", 1.0, 3.0, 1.5, 0.1)
+mnav = st.sidebar.slider(
+    "mNAV — Forward Estimate (Market Cap ÷ BTC NAV)",
+    1.0, 3.0, 1.5, 0.1,
+    help=(
+        "**mNAV = Market Cap ÷ BTC NAV** (not Enterprise Value — this excludes debt, "
+        "unlike the EV/NAV ratio shown on strategy.com).\n\n"
+        "**Current:** ~0.87x\n\n"
+        "**Historical range:** 0.75x – 2.7x\n\n"
+        "**Scenario guidance:**\n"
+        "- 🐻 Bear: 0.8x – 1.0x\n"
+        "- 📊 Base: 1.3x – 1.5x\n"
+        "- 🐂 Bull: 2.0x – 3.0x"
+    ),
+)
 kelly_frac = st.sidebar.slider("Kelly Fraction", 0.1, 1.0, 0.5, 0.05,
                                 help="0.5 = half-Kelly (recommended)")
 model_choice = st.sidebar.selectbox("Price Model", ["Blended", "Jacobian", "Block Height"])
