@@ -54,6 +54,29 @@ mnav = st.sidebar.slider(
     ),
 )
 _mnav_live_caption = st.sidebar.empty()
+st.sidebar.markdown(
+    """
+<style>
+.mnav-table { width:100%; border-collapse:collapse; font-size:0.72rem; margin-top:2px; }
+.mnav-table th { color:#888; font-weight:500; text-align:left; padding:2px 4px; border-bottom:1px solid #333; }
+.mnav-table td { padding:2px 4px; color:#ccc; }
+.mnav-table tr:hover td { color:#fff; }
+.mnav-range { color:#aaa; }
+</style>
+<table class="mnav-table">
+  <tr><th>Scenario</th><th>BTC q</th><th>mNAV range</th></tr>
+  <tr><td>🐻 Bear</td><td>≤ 0.25</td><td class="mnav-range">0.7 – 1.0x</td></tr>
+  <tr><td>📊 Base</td><td>~0.50</td><td class="mnav-range">1.3 – 1.6x</td></tr>
+  <tr><td>🐂 Bull</td><td>≥ 0.75</td><td class="mnav-range">1.8 – 2.5x</td></tr>
+  <tr><td>🚀 Euphoria</td><td>≥ 0.95</td><td class="mnav-range">2.5 – 3.0x</td></tr>
+</table>
+<p style="font-size:0.65rem;color:#666;margin:3px 0 0 0;">
+  mNAV rises with BTC momentum, not just price level.<br>
+  Pair your BTC scenario with the matching mNAV range.
+</p>
+    """,
+    unsafe_allow_html=True,
+)
 kelly_frac = st.sidebar.slider("Kelly Fraction", 0.1, 1.0, 0.5, 0.05,
                                 help="0.5 = half-Kelly (recommended)")
 model_choice = st.sidebar.selectbox("Price Model", ["Blended", "Jacobian", "Block Height"])
