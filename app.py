@@ -348,6 +348,14 @@ with tab1:
               .sort_values("_sort_q")
               .drop(columns="_sort_q")
               .set_index("Scenario"))
+    _today_hdr  = f"mNAV = {_current_mnav:.2f}x"
+    _expiry_hdr = f"mNAV = {mnav:.2f}x"
+    _tdf.columns = pd.MultiIndex.from_tuples([
+        (_today_hdr,  "Today BTC"),
+        (_today_hdr,  "Today MSTR"),
+        (_expiry_hdr, col_btc_e),
+        (_expiry_hdr, col_mstr_e),
+    ])
     st.dataframe(_tdf, use_container_width=True)
 
     st.markdown("---")
