@@ -388,8 +388,7 @@ with tab1:
     display_df = display_df.drop(columns=[c for c in ["Jac E[R]", "BHM E[R]", "Blended E[R]"] if c in display_df.columns and c != _sel_er])
     # ─────────────────────────────────────────────────────────────────────────────────
 
-    # Strike index → formatted string (non-sortable, but index cols aren't clickable anyway)
-    display_df.index = display_df.index.map("${:,.0f}".format)
+    # Strike index stays numeric so Streamlit sorts it correctly; formatted via column_config below
 
     # Spread % stays a string (emoji prefix makes it inherently non-numeric)
     def _fmt_spread(row):
@@ -420,6 +419,7 @@ with tab1:
 
     hurdle_er = 1 + r_period
     _col_cfg = {
+        "Strike":               st.column_config.NumberColumn("Strike",               format="$%,.0f"),
         "Premium":              st.column_config.NumberColumn("Premium",              format="$%.2f"),
         "Marg. Efficiency":     st.column_config.NumberColumn("Marg. Efficiency",     format="%.3f"),
         "Open Interest":        st.column_config.NumberColumn("Open Interest",         format="%d"),
