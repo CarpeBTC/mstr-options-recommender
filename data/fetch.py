@@ -6,7 +6,6 @@ from datetime import datetime, date as _date
 from typing import Optional
 import time as _time
 
-import requests as _requests
 import yfinance as yf
 import pandas as pd
 import streamlit as st
@@ -24,14 +23,6 @@ _UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
-
-# Shared requests session — persists cookies across yfinance calls, reduces 429s
-_yf_session = _requests.Session()
-_yf_session.headers.update({"User-Agent": _UA})
-
-
-def _yf_ticker(ticker: str) -> yf.Ticker:
-    return yf.Ticker(ticker, session=_yf_session)
 
 
 def _with_retry(fn, retries: int = 3, base_delay: float = 2.0):
@@ -51,19 +42,18 @@ def _with_retry(fn, retries: int = 3, base_delay: float = 2.0):
 
 @st.cache_data(ttl=480)   # 8 min — staggered from chain (10 min) to avoid simultaneous expiry
 def get_equity_price(ticker: str) -> float:
-    return _with_retry(lambda: float(_yf_ticker(ticker).fast_info.last_price))
+    return _with_retry(lambda: float(yf.Ticker(ticker).fast_info.last_price))
 
 
 @st.cache_data(ttl=600)   # 10 min
 def get_available_expiries(ticker: str) -> list[str]:
-    return _with_retry(lambda: list(_yf_ticker(ticker).options))
+    return _with_retry(lambda: list(yf.Ticker(ticker).options))
 
 
 @st.cache_data(ttl=600)   # 10 min
 def get_option_chain(ticker: str, expiry_str: str) -> pd.DataFrame:
     def _fetch():
-        t = _yf_ticker(ticker)
-        chain = t.option_chain(expiry_str)
+        chain = yf.Ticker(ticker).option_chain(expiry_str)
         calls = chain.calls.copy()
         calls["mid"] = (calls["bid"] + calls["ask"]) / 2
         return calls[["strike", "lastPrice", "bid", "ask", "mid", "volume", "openInterest", "impliedVolatility"]].copy()
@@ -74,7 +64,7 @@ def get_option_chain(ticker: str, expiry_str: str) -> pd.DataFrame:
 def get_btc_price_live() -> Optional[float]:
     """Fetch live BTC-USD price from yfinance. Returns None on failure."""
     try:
-        return _with_retry(lambda: float(_yf_ticker("BTC-USD").fast_info.last_price))
+        return _with_retry(lambda: float(yf.Ticker("BTC-USD").fast_info.last_price))
     except Exception:
         return None
 
