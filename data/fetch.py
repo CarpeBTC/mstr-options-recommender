@@ -2,32 +2,44 @@ import re as _re
 import json as _json
 import urllib.request as _urlreq
 from pathlib import Path as _Path
+from datetime import datetime, date as _date
+from typing import Optional
+
 import yfinance as yf
 import pandas as pd
 import streamlit as st
-from datetime import datetime
-from typing import Optional
 
-_HOLDINGS_CACHE_FILE = _Path(__file__).parent / ".holdings_cache.json"
+# ── File-based last-known-good caches ────────────────────────────────────────
+_HOLDINGS_CACHE_FILE      = _Path(__file__).parent / ".holdings_cache.json"
+_ASST_HOLDINGS_CACHE_FILE = _Path(__file__).parent / ".asst_holdings_cache.json"
 
+# ── ASST (Strive) hardcoded fallbacks ────────────────────────────────────────
+ASST_BTC_HOLDINGS         = 13_628
+ASST_FULLY_DILUTED_SHARES_K = 70_313   # thousands (~70.3M, derived from treasury.strive.com)
+ASST_REF_DATE             = _date(2026, 3, 17)
 
-@st.cache_data(ttl=300)
-def get_mstr_price() -> float:
-    ticker = yf.Ticker("MSTR")
-    info = ticker.fast_info
-    return float(info.last_price)
-
-
-@st.cache_data(ttl=300)
-def get_available_expiries() -> list[str]:
-    ticker = yf.Ticker("MSTR")
-    return list(ticker.options)
+_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
 
 
 @st.cache_data(ttl=300)
-def get_option_chain(expiry_str: str) -> pd.DataFrame:
-    ticker = yf.Ticker("MSTR")
-    chain = ticker.option_chain(expiry_str)
+def get_equity_price(ticker: str) -> float:
+    t = yf.Ticker(ticker)
+    return float(t.fast_info.last_price)
+
+
+@st.cache_data(ttl=300)
+def get_available_expiries(ticker: str) -> list[str]:
+    t = yf.Ticker(ticker)
+    return list(t.options)
+
+
+@st.cache_data(ttl=300)
+def get_option_chain(ticker: str, expiry_str: str) -> pd.DataFrame:
+    t = yf.Ticker(ticker)
+    chain = t.option_chain(expiry_str)
     calls = chain.calls.copy()
     calls["mid"] = (calls["bid"] + calls["ask"]) / 2
     return calls[["strike", "lastPrice", "bid", "ask", "mid", "volume", "openInterest", "impliedVolatility"]].copy()
@@ -48,7 +60,7 @@ def get_strategy_holdings() -> Optional[dict]:
     """Fetch latest BTC holdings and assumed diluted shares from strategy.com/shares.
 
     Returns dict with keys:
-        btc_holdings (int)    — total BTC held
+        btc_holdings (int)     — total BTC held
         diluted_shares_k (int) — assumed diluted shares outstanding (thousands)
         as_of (str)            — date of the data (YYYY-MM-DD)
         source (str)           — "live" | "cached"
@@ -60,13 +72,7 @@ def get_strategy_holdings() -> Optional[dict]:
     try:
         req = _urlreq.Request(
             "https://www.strategy.com/shares",
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/120.0.0.0 Safari/537.36"
-                )
-            },
+            headers={"User-Agent": _UA},
         )
         with _urlreq.urlopen(req, timeout=10) as r:
             text = r.read().decode("utf-8", errors="ignore")
@@ -84,17 +90,80 @@ def get_strategy_holdings() -> Optional[dict]:
             "as_of":            latest["date"],
             "source":           "live",
         }
-        # Persist last-known-good so future failures can fall back here
         try:
             _HOLDINGS_CACHE_FILE.write_text(_json.dumps(data))
         except Exception:
             pass
         return data
     except Exception:
-        # Live fetch failed — return last cached values rather than hardcoded defaults
         try:
             if _HOLDINGS_CACHE_FILE.exists():
                 data = _json.loads(_HOLDINGS_CACHE_FILE.read_text())
+                data["source"] = "cached"
+                return data
+        except Exception:
+            pass
+        return None
+
+
+@st.cache_data(ttl=3600)  # refresh hourly — treasury.strive.com updates daily
+def get_asst_holdings() -> Optional[dict]:
+    """Fetch latest BTC holdings and diluted shares for Strive (ASST).
+
+    Data source: data.strategytracker.com — the backend API powering treasury.strive.com.
+    treasury.strive.com is a React SPA; the raw data lives at the API endpoint.
+
+    Returns dict with keys:
+        btc_holdings (int)     — total BTC held
+        diluted_shares_k (int) — diluted shares (thousands), derived from satsPerShare
+        as_of (str)            — data timestamp date (YYYY-MM-DD)
+        source (str)           — "live" | "cached"
+
+    On live-fetch failure, falls back to last cached values in .asst_holdings_cache.json.
+    Returns None only if both fail — callers should use ASST hardcoded defaults.
+    """
+    try:
+        _headers = {"User-Agent": _UA, "Referer": "https://treasury.strive.com/"}
+
+        # Step 1: resolve current versioned filename
+        req = _urlreq.Request("https://data.strategytracker.com/latest.json", headers=_headers)
+        with _urlreq.urlopen(req, timeout=10) as r:
+            latest_meta = _json.loads(r.read().decode())
+
+        light_file = latest_meta["files"]["light"]
+        timestamp  = latest_meta.get("timestamp", "")
+
+        # Step 2: fetch the light data file
+        req2 = _urlreq.Request(
+            f"https://data.strategytracker.com/{light_file}",
+            headers=_headers,
+        )
+        with _urlreq.urlopen(req2, timeout=10) as r:
+            payload = _json.loads(r.read().decode())
+
+        asst           = payload["companies"]["ASST"]
+        btc_holdings   = float(asst["holdings"])
+        sats_per_share = int(asst["satsPerShare"])
+        btc_per_share  = sats_per_share / 1e8
+        diluted_shares = int(btc_holdings / btc_per_share)
+        diluted_shares_k = diluted_shares // 1000
+        as_of = timestamp[:10] if timestamp else ""
+
+        data = {
+            "btc_holdings":     int(btc_holdings),
+            "diluted_shares_k": diluted_shares_k,
+            "as_of":            as_of,
+            "source":           "live",
+        }
+        try:
+            _ASST_HOLDINGS_CACHE_FILE.write_text(_json.dumps(data))
+        except Exception:
+            pass
+        return data
+    except Exception:
+        try:
+            if _ASST_HOLDINGS_CACHE_FILE.exists():
+                data = _json.loads(_ASST_HOLDINGS_CACHE_FILE.read_text())
                 data["source"] = "cached"
                 return data
         except Exception:

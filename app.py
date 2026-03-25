@@ -6,14 +6,14 @@ import plotly.express as px
 from datetime import date, datetime, timedelta
 
 from functools import partial
-from data.fetch import get_mstr_price, get_available_expiries, get_option_chain, get_last_updated, get_btc_price_live, get_strategy_holdings, get_block_height_live
+from data.fetch import get_equity_price, get_available_expiries, get_option_chain, get_last_updated, get_btc_price_live, get_strategy_holdings, get_asst_holdings, get_block_height_live
 from models import jacobian, block_height
 from models.mstr import apply_mnav, btc_to_mstr
 from analytics.kelly import build_portfolio_metrics
 from analytics.options import compute_exit_timing, compute_pnl_heatmap
 
 st.set_page_config(
-    page_title="MSTR Options Recommender",
+    page_title="BTC Equity Options Recommender",
     page_icon="₿",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -21,13 +21,19 @@ st.set_page_config(
 
 # ── Sidebar ──────────────────────────────────────────────────────────────────
 
-st.sidebar.title("₿ MSTR Options Recommender")
+st.sidebar.title("₿ BTC Equity Options")
 st.sidebar.markdown("---")
 
 if st.sidebar.button("🔄 Refresh Data", use_container_width=True):
     st.cache_data.clear()
 
 st.sidebar.markdown("---")
+
+equity = st.sidebar.selectbox(
+    "Equity",
+    ["MSTR", "ASST"],
+    format_func=lambda x: {"MSTR": "MSTR — Strategy", "ASST": "ASST — Strive"}[x],
+)
 
 bankroll = st.sidebar.number_input("Bankroll ($)", min_value=1000, max_value=10_000_000,
                                     value=10_000, step=1_000)
@@ -81,22 +87,22 @@ kelly_frac = st.sidebar.slider("Kelly Fraction", 0.1, 1.0, 0.5, 0.05,
                                 help="0.5 = half-Kelly (recommended)")
 model_choice = st.sidebar.selectbox("Price Model", ["Blended", "Jacobian", "Block Height"])
 st.sidebar.markdown("---")
-btc_yield = st.sidebar.slider("MSTR BTC Yield Yr 1 (%)", 0, 30, 10, 1) / 100
+btc_yield = st.sidebar.slider(f"{equity} BTC Yield Yr 1 (%)", 0, 30, 10, 1) / 100
 
 # ── Load Live Data ────────────────────────────────────────────────────────────
 
-with st.spinner("Fetching MSTR data..."):
+_equity_name = {"MSTR": "Strategy (MSTR)", "ASST": "Strive (ASST)"}[equity]
+with st.spinner(f"Fetching {_equity_name} data..."):
     try:
-        mstr_price = get_mstr_price()
-        expiries = get_available_expiries()
+        equity_price = get_equity_price(equity)
+        expiries = get_available_expiries(equity)
         btc_live = get_btc_price_live()
     except Exception as e:
         st.error(f"Failed to fetch data: {e}")
         st.stop()
 
-# Fetch live Strategy holdings (BTC + diluted shares) from strategy.com/shares
-# Falls back to hardcoded defaults in models/mstr.py if the fetch fails
-_holdings = get_strategy_holdings()
+# Fetch live BTC holdings + diluted shares for the selected equity
+_holdings = get_strategy_holdings() if equity == "MSTR" else get_asst_holdings()
 _live_btc   = _holdings["btc_holdings"]     if _holdings else None
 _live_shrs  = _holdings["diluted_shares_k"] if _holdings else None
 _live_date  = _holdings["as_of"]            if _holdings else None
@@ -107,8 +113,8 @@ _btc_to_mstr = partial(btc_to_mstr,  btc_holdings=_live_btc, diluted_shares_k=_l
 _apply_mnav  = partial(apply_mnav,   btc_holdings=_live_btc, diluted_shares_k=_live_shrs, ref_date=_live_rdate)
 
 # Fill the mNAV live caption now that we have price + holdings data
-if btc_live and _live_btc and _live_shrs and mstr_price:
-    _current_mnav = (mstr_price * _live_shrs * 1000) / (btc_live * _live_btc)
+if btc_live and _live_btc and _live_shrs and equity_price:
+    _current_mnav = (equity_price * _live_shrs * 1000) / (btc_live * _live_btc)
     _mnav_live_caption.caption(f"📍 Current: **{_current_mnav:.2f}x** (live)")
 else:
     _current_mnav = mnav  # fall back to slider value if live data unavailable
@@ -133,11 +139,11 @@ try:
 except Exception:
     expiry_date = date(2027, 12, 17)
 
-with st.spinner("Fetching option chain..."):
+with st.spinner(f"Fetching {equity} option chain..."):
     try:
-        chain_df = get_option_chain(selected_expiry)
+        chain_df = get_option_chain(equity, selected_expiry)
     except Exception as e:
-        st.error(f"Failed to fetch option chain for {selected_expiry}: {e}")
+        st.error(f"Failed to fetch option chain for {equity} {selected_expiry}: {e}")
         st.stop()
 
 # ── Compute Model Prices ──────────────────────────────────────────────────────
@@ -261,7 +267,7 @@ tab1, tab2, tab3, tab4 = st.tabs(["Recommendations", "Price Projections", "Strik
 # ════════════════════════════════════════════════════════════════════════════
 with tab1:
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("MSTR Price", f"${mstr_price:,.2f}")
+    col1.metric(f"{equity} Price", f"${equity_price:,.2f}")
     col2.metric("Option Expiry", selected_expiry)
     col3.metric("mNAV Multiplier", f"{mnav:.1f}x")
     col4.metric("Bankroll", f"${bankroll:,.0f}")
@@ -279,19 +285,29 @@ with tab1:
             f"ℹ️ {stale_count} of {len(chain_liq)} strikes are using **last traded price** "
             f"(no live bid/ask). Spread filter applied only to {live_count} live quotes."
         )
-    if _holdings and _holdings.get("source") == "live":
-        _src = f"Strategy BTC: {_live_btc:,} · Diluted Shares: {_live_shrs:,}K (as of {_live_date}, strategy.com)"
-    elif _holdings and _holdings.get("source") == "cached":
-        _src = f"Strategy BTC: {_live_btc:,} · Diluted Shares: {_live_shrs:,}K (as of {_live_date}, last cached — strategy.com unavailable)"
+    if equity == "MSTR":
+        _data_src_url = "strategy.com"
+        _co_name = "Strategy"
     else:
-        from models.mstr import BTC_HOLDINGS, FULLY_DILUTED_SHARES_K
-        _src = f"Strategy BTC: {BTC_HOLDINGS:,} · Diluted Shares: {FULLY_DILUTED_SHARES_K:,}K (hardcoded fallback — strategy.com unavailable)"
+        _data_src_url = "treasury.strive.com"
+        _co_name = "Strive"
+    if _holdings and _holdings.get("source") == "live":
+        _src = f"{_co_name} BTC: {_live_btc:,} · Diluted Shares: {_live_shrs:,}K (as of {_live_date}, {_data_src_url})"
+    elif _holdings and _holdings.get("source") == "cached":
+        _src = f"{_co_name} BTC: {_live_btc:,} · Diluted Shares: {_live_shrs:,}K (as of {_live_date}, last cached — {_data_src_url} unavailable)"
+    else:
+        if equity == "MSTR":
+            from models.mstr import BTC_HOLDINGS, FULLY_DILUTED_SHARES_K
+            _src = f"{_co_name} BTC: {BTC_HOLDINGS:,} · Diluted Shares: {FULLY_DILUTED_SHARES_K:,}K (hardcoded fallback — {_data_src_url} unavailable)"
+        else:
+            from data.fetch import ASST_BTC_HOLDINGS, ASST_FULLY_DILUTED_SHARES_K
+            _src = f"{_co_name} BTC: {ASST_BTC_HOLDINGS:,} · Diluted Shares: {ASST_FULLY_DILUTED_SHARES_K:,}K (hardcoded fallback — {_data_src_url} unavailable)"
     _blk = f"Block Height: {_live_block_height:,} (live)" if _live_block_height else "Block Height: estimated (API unavailable)"
     st.caption(f"Data as of {get_last_updated()} | Model: Blended (Jacobian + Block Height) | {_src} | {_blk}")
     st.markdown("---")
 
     # ── Price Targets Summary ──
-    st.subheader("MSTR Price Targets at Expiry")
+    st.subheader(f"{equity} Price Targets at Expiry")
 
     today = date.today()
     j_btc_today   = jacobian.get_btc_price(today)
@@ -341,7 +357,7 @@ with tab1:
 
     today_row_label = f"Today ({today_q_str})" if today_q_str else "Today"
     col_btc_e  = f"{_model_lbl} BTC @ {selected_expiry}"
-    col_mstr_e = f"{_model_lbl} MSTR @ {selected_expiry}"
+    col_mstr_e = f"{_model_lbl} {equity} @ {selected_expiry}"
 
     target_rows = []
     # "Today" row — live market prices, no model expiry forecast
@@ -349,7 +365,7 @@ with tab1:
         "Scenario":  today_row_label,
         "_sort_q":   today_q_num,
         "Today BTC":  f"${btc_live:,.0f}" if btc_live else "—",
-        "Today MSTR": f"${mstr_price:,.0f}",
+        f"Today {equity}": f"${equity_price:,.0f}",
         col_btc_e:    "—",
         col_mstr_e:   "—",
     })
@@ -363,7 +379,7 @@ with tab1:
             "Scenario":   q,
             "_sort_q":    _q_nums[q],
             "Today BTC":  f"${btc_t:,.0f}"  if btc_t  else "—",
-            "Today MSTR": f"${mstr_t:,.0f}" if mstr_t else "—",
+            f"Today {equity}": f"${mstr_t:,.0f}" if mstr_t else "—",
             col_btc_e:    f"${btc_e:,.0f}"  if btc_e  else "—",
             col_mstr_e:   f"${mstr_e:,.0f}" if mstr_e else "—",
         })
@@ -375,7 +391,7 @@ with tab1:
     _expiry_hdr = f"mNAV = {mnav:.2f}x"
     _tdf.columns = pd.MultiIndex.from_tuples([
         (_today_hdr,  "Today BTC"),
-        (_today_hdr,  "Today MSTR"),
+        (_today_hdr,  f"Today {equity}"),
         (_expiry_hdr, col_btc_e),
         (_expiry_hdr, col_mstr_e),
     ])
@@ -520,7 +536,7 @@ with tab2:
     st.plotly_chart(fig_btc, use_container_width=True)
 
     # ── MSTR Price at Expiry ──
-    st.subheader(f"MSTR Price Targets at Expiry ({selected_expiry})")
+    st.subheader(f"{equity} Price Targets at Expiry ({selected_expiry})")
 
     j_mstr_targets = {q: _btc_to_mstr(jacobian.get_btc_price(expiry_date)[q], expiry_date, mnav, btc_yield)
                       for q in j_quants_to_plot}
@@ -536,10 +552,10 @@ with tab2:
         x=list(b_mstr_targets.keys()), y=list(b_mstr_targets.values()),
         name="Block Height", marker_color="#7B2D8B", opacity=0.85
     ))
-    fig_mstr.add_hline(y=mstr_price, line_dash="dot", line_color="white",
-                       annotation_text=f"Current ${mstr_price:.0f}")
+    fig_mstr.add_hline(y=equity_price, line_dash="dot", line_color="white",
+                       annotation_text=f"Current ${equity_price:.0f}")
     fig_mstr.update_layout(
-        barmode="group", title=f"MSTR Price at {mnav:.1f}x mNAV by Quantile",
+        barmode="group", title=f"{equity} Price at {mnav:.1f}x mNAV by Quantile",
         yaxis_title="MSTR Price (USD)", yaxis_tickprefix="$", yaxis_tickformat=",.0f",
         height=400
     )
@@ -549,7 +565,7 @@ with tab2:
     st.subheader("Live Option Chain (Calls)")
     display_chain = chain_df[chain_df["mid"] > 0].copy()
     display_chain = display_chain[display_chain["strike"].between(
-        mstr_price * 0.5, mstr_price * 8
+        equity_price * 0.5, equity_price * 8
     )]
     display_chain["spread_pct_fmt"] = display_chain.apply(
         lambda r: "⚪ Stale" if r.get("is_stale", False)
@@ -589,8 +605,8 @@ with tab3:
     plot_df = metrics_df[
         (metrics_df["$ Allocated"] > 0) &
         (metrics_df[er_col] > 0) &
-        (metrics_df.index >= mstr_price * 0.3) &
-        (metrics_df.index <= mstr_price * 10)
+        (metrics_df.index >= equity_price * 0.3) &
+        (metrics_df.index <= equity_price * 10)
     ].copy()
     plot_df = plot_df.sort_values("$ Allocated", ascending=False).head(60)
 
@@ -601,7 +617,7 @@ with tab3:
 
         # Color by moneyness: ITM (strike < current) = green, OTM = orange → red
         def moneyness_color(strike):
-            ratio = strike / mstr_price
+            ratio = strike / equity_price
             if ratio <= 1.0:
                 return "#2ca02c"   # green — in the money
             elif ratio <= 2.0:
@@ -669,7 +685,7 @@ with tab3:
 
         # Vertical line at current MSTR price mapped to typical ATM allocation
         atm_alloc = plot_df.loc[
-            plot_df.index[np.argmin(np.abs(plot_df.index.values - mstr_price))], "$ Allocated"
+            plot_df.index[np.argmin(np.abs(plot_df.index.values - equity_price))], "$ Allocated"
         ] if len(plot_df) > 0 else None
 
         fig.update_layout(
@@ -719,7 +735,7 @@ with tab3:
             f"(Blended f* × {kelly_frac:.0%} × \\${bankroll:,.0f}). "
             f"Y = E[R] from {model_choice} model scenarios. "
             f"Bubble size scales with number of contracts. "
-            f"Current MSTR: \\${mstr_price:,.2f}."
+            f"Current {equity}: \\${equity_price:,.2f}."
         )
 
 
@@ -738,8 +754,8 @@ with tab4:
     marg_df = metrics_df[[er_col4, "$ Allocated", "Premium", "Contracts"]].copy()
     marg_df = marg_df[
         (marg_df[er_col4] > 0) &
-        (marg_df.index >= mstr_price * 0.3) &
-        (marg_df.index <= mstr_price * 10)
+        (marg_df.index >= equity_price * 0.3) &
+        (marg_df.index <= equity_price * 10)
     ].sort_index()
 
     if len(marg_df) < 2:
@@ -832,8 +848,8 @@ with tab4:
 
                 # Current MSTR price marker — numeric x-axis, no markdown escaping needed
                 fig_marg.add_vline(
-                    x=mstr_price, line_dash="dash", line_color="rgba(255,255,255,0.45)",
-                    annotation_text=f"MSTR ${mstr_price:.0f}",
+                    x=equity_price, line_dash="dash", line_color="rgba(255,255,255,0.45)",
+                    annotation_text=f"{equity} ${equity_price:.0f}",
                     annotation_position="top left",
                     annotation_font=dict(color="rgba(255,255,255,0.6)", size=10),
                 )

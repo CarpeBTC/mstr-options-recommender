@@ -9,6 +9,7 @@ __pycache__/
 
 # Runtime cache files
 data/.holdings_cache.json
+data/.asst_holdings_cache.json
 
 # macOS
 .DS_Store
