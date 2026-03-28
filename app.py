@@ -1,3 +1,4 @@
+import time
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -92,14 +93,41 @@ btc_yield = st.sidebar.slider(f"{equity} BTC Yield Yr 1 (%)", 0, 30, 10, 1) / 10
 # ── Load Live Data ────────────────────────────────────────────────────────────
 
 _equity_name = {"MSTR": "Strategy (MSTR)", "ASST": "Strive (ASST)"}[equity]
+_MAX_RETRIES = 4
+if "fetch_retry_count" not in st.session_state:
+    st.session_state.fetch_retry_count = 0
+
 with st.spinner(f"Fetching {_equity_name} data..."):
     try:
         equity_price = get_equity_price(equity)
+        time.sleep(0.3)                          # small gap to avoid rapid-fire rate limiting
         expiries = get_available_expiries(equity)
+        time.sleep(0.3)
         btc_live = get_btc_price_live()
+        st.session_state.fetch_retry_count = 0  # reset on success
     except Exception as e:
-        st.error(f"Failed to fetch data: {e}")
-        st.stop()
+        msg = str(e).lower()
+        if any(k in msg for k in ("too many requests", "rate limit", "429")):
+            if st.session_state.fetch_retry_count < _MAX_RETRIES:
+                st.session_state.fetch_retry_count += 1
+                wait = 15 * st.session_state.fetch_retry_count
+                st.warning(
+                    f"⏳ Yahoo Finance is rate limiting requests — "
+                    f"auto-retrying in {wait}s "
+                    f"(attempt {st.session_state.fetch_retry_count}/{_MAX_RETRIES})…"
+                )
+                time.sleep(wait)
+                st.rerun()
+            else:
+                st.session_state.fetch_retry_count = 0
+                st.error(
+                    "⚠️ Yahoo Finance is rate limiting this server. "
+                    "Please wait 1–2 minutes then click **Refresh Data**."
+                )
+                st.stop()
+        else:
+            st.error(f"Failed to fetch data: {e}")
+            st.stop()
 
 # Fetch live BTC holdings + diluted shares for the selected equity
 _holdings = get_strategy_holdings() if equity == "MSTR" else get_asst_holdings()
