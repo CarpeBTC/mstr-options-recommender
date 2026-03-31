@@ -25,7 +25,7 @@ _UA = (
 )
 
 
-def _with_retry(fn, retries: int = 3, base_delay: float = 2.0):
+def _with_retry(fn, retries: int = 3, base_delay: float = 5.0):
     """Call fn(), retrying on Yahoo 429 / rate-limit errors with exponential backoff."""
     for attempt in range(retries):
         try:
@@ -34,20 +34,22 @@ def _with_retry(fn, retries: int = 3, base_delay: float = 2.0):
             msg = str(e).lower()
             if any(k in msg for k in ("too many requests", "rate limit", "429")):
                 if attempt < retries - 1:
-                    _time.sleep(base_delay * (2 ** attempt))   # 2s, 4s, 8s
+                    _time.sleep(base_delay * (3 ** attempt))   # 5s, 15s, 45s
                     continue
             raise
     raise RuntimeError("Yahoo Finance rate limit exceeded after retries — try again shortly")
 
 
 @st.cache_data(ttl=480)   # 8 min — staggered from chain (10 min) to avoid simultaneous expiry
-def get_equity_price(ticker: str) -> float:
-    return _with_retry(lambda: float(yf.Ticker(ticker).fast_info.last_price))
-
-
-@st.cache_data(ttl=600)   # 10 min
-def get_available_expiries(ticker: str) -> list[str]:
-    return _with_retry(lambda: list(yf.Ticker(ticker).options))
+def get_equity_data(ticker: str) -> dict:
+    """Fetch equity price and option expiries in a single Ticker instantiation.
+    Combining these reduces Yahoo Finance API calls from 2 → 1 on cold start."""
+    def _fetch():
+        t = yf.Ticker(ticker)
+        price    = float(t.fast_info.last_price)
+        expiries = list(t.options)
+        return {"price": price, "expiries": expiries}
+    return _with_retry(_fetch)
 
 
 @st.cache_data(ttl=600)   # 10 min
@@ -60,7 +62,7 @@ def get_option_chain(ticker: str, expiry_str: str) -> pd.DataFrame:
     return _with_retry(_fetch)
 
 
-@st.cache_data(ttl=360)   # 6 min — staggered from equity price (8 min)
+@st.cache_data(ttl=360)   # 6 min — staggered from equity data (8 min)
 def get_btc_price_live() -> Optional[float]:
     """Fetch live BTC-USD price from yfinance. Returns None on failure."""
     try:

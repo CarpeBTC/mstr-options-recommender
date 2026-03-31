@@ -7,7 +7,7 @@ import plotly.express as px
 from datetime import date, datetime, timedelta
 
 from functools import partial
-from data.fetch import get_equity_price, get_available_expiries, get_option_chain, get_last_updated, get_btc_price_live, get_strategy_holdings, get_asst_holdings, get_block_height_live
+from data.fetch import get_equity_data, get_option_chain, get_last_updated, get_btc_price_live, get_strategy_holdings, get_asst_holdings, get_block_height_live
 from models import jacobian, block_height
 from models.mstr import apply_mnav, btc_to_mstr
 from analytics.kelly import build_portfolio_metrics
@@ -99,10 +99,9 @@ if "fetch_retry_count" not in st.session_state:
 
 with st.spinner(f"Fetching {_equity_name} data..."):
     try:
-        equity_price = get_equity_price(equity)
-        time.sleep(0.3)                          # small gap to avoid rapid-fire rate limiting
-        expiries = get_available_expiries(equity)
-        time.sleep(0.3)
+        _eq = get_equity_data(equity)
+        equity_price = _eq["price"]
+        expiries     = _eq["expiries"]
         btc_live = get_btc_price_live()
         st.session_state.fetch_retry_count = 0  # reset on success
     except Exception as e:
