@@ -11,6 +11,7 @@ from data.fetch import get_equity_data, get_option_chain, get_last_updated, get_
 from models import jacobian, block_height
 from models.mstr import apply_mnav, btc_to_mstr
 from analytics.kelly import build_portfolio_metrics
+from btc_powerlaw_tab import render_powerlaw_tab
 from analytics.options import compute_exit_timing, compute_pnl_heatmap
 
 st.set_page_config(
@@ -287,7 +288,7 @@ def _build_blended_scenarios(j_scenarios: list[dict], b_scenarios: list[dict]) -
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 
-tab1, tab2, tab3, tab4 = st.tabs(["Recommendations", "Price Projections", "Strike Detail", "Marginal Return"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["Recommendations", "Price Projections", "Strike Detail", "Marginal Return", "BTC Power Law"])
 
 # ════════════════════════════════════════════════════════════════════════════
 # TAB 1: RECOMMENDATIONS
@@ -936,3 +937,10 @@ with tab4:
                     f"Peak bar (orange) = best marginal risk/reward — the strike where moving one step higher "
                     f"earns the most additional expected return per unit of strike premium paid.{clip_note}"
                 )
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# TAB 5: BTC POWER LAW
+# ════════════════════════════════════════════════════════════════════════════
+with tab5:
+    render_powerlaw_tab()
