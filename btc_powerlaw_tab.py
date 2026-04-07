@@ -200,12 +200,17 @@ def render_powerlaw_tab():
         name="PL + Fund + Harmonic",
     ))
 
-    # Vertical line for analysis date
-    fig.add_vline(
-        x=str(analysis_date),
+    # Vertical line for analysis date (add_vline fails with date axes; use add_shape instead)
+    _ad_str = analysis_date.strftime("%Y-%m-%d")
+    fig.add_shape(
+        type="line", x0=_ad_str, x1=_ad_str, y0=0, y1=1,
+        xref="x", yref="paper",
         line=dict(color=COLORS["warn"], width=1.5, dash="dash"),
-        annotation_text=str(analysis_date),
-        annotation_font_color=COLORS["warn"],
+    )
+    fig.add_annotation(
+        x=_ad_str, y=1, xref="x", yref="paper",
+        text=_ad_str, showarrow=False,
+        xanchor="left", font=dict(color=COLORS["warn"], size=11),
     )
 
     fig.update_layout(
