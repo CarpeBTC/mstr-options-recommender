@@ -509,13 +509,15 @@ with tab1:
         display_df.index.map(lambda k: _pt_r(_mstr_q75_d, k, premiums.get(k, 1)))
         if _mstr_q75_d else np.nan
     )
-    # Show the selected-blend E[R]; drop all individual model E[R] columns
-    display_df = display_df.rename(columns={"Selected E[R]": f"{_model_lbl} E[R]"})
+    # Drop raw per-model E[R] columns first, THEN rename Selected → model label.
+    # Order matters: if _model_lbl == "Cowen", renaming first would create a
+    # duplicate "Cowen E[R]" which the subsequent drop would then remove entirely.
     display_df = display_df.drop(
-        columns=[c for c in ["Jac E[R]", "BHM E[R]", "Blended E[R]", "Cowen E[R]", "Selected E[R]"]
+        columns=[c for c in ["Jac E[R]", "BHM E[R]", "Blended E[R]", "Cowen E[R]"]
                  if c in display_df.columns],
         errors="ignore",
     )
+    display_df = display_df.rename(columns={"Selected E[R]": f"{_model_lbl} E[R]"})
     # ─────────────────────────────────────────────────────────────────────────────────
 
     # Strike index stays numeric so Streamlit sorts it correctly; formatted via column_config below
@@ -531,14 +533,13 @@ with tab1:
     display_df["Spread %"] = display_df.apply(_fmt_spread, axis=1)
     display_df = display_df.drop(columns=["_is_stale"], errors="ignore")
 
-    # Show the selected-blend Kelly f*; drop all individual model Kelly columns
-    display_df = display_df.rename(columns={"Selected Kelly f*": "Kelly f*"})
+    # Same pattern: drop raw Kelly columns first, then rename Selected → "Kelly f*"
     display_df = display_df.drop(
-        columns=[c for c in ["Jac Kelly f*", "BHM Kelly f*", "Blended Kelly f*",
-                             "Cowen Kelly f*", "Selected Kelly f*"]
+        columns=[c for c in ["Jac Kelly f*", "BHM Kelly f*", "Blended Kelly f*", "Cowen Kelly f*"]
                  if c in display_df.columns],
         errors="ignore",
     )
+    display_df = display_df.rename(columns={"Selected Kelly f*": "Kelly f*"})
 
     # Scale Kelly columns from fraction to percentage points (0.123 → 12.3) for display
     display_df["Kelly f*"]   = display_df["Kelly f*"]   * 100
