@@ -1034,8 +1034,8 @@ with tab5:
 # ════════════════════════════════════════════════════════════════════════════
 with tab6:
     render_portfolio_tab(
-        mstr_price_live=mstr_price_live or equity_price,
-        asst_price_live=asst_price_live or equity_price,
+        mstr_price_live=mstr_price_live,   # None → portfolio_tab falls back to CSV ref price
+        asst_price_live=asst_price_live,   # None → portfolio_tab falls back to CSV ref price
         btc_price_live=btc_live or 0.0,
         use_jacobian=use_jacobian,
         use_bhm=use_bhm,

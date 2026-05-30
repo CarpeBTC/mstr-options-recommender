@@ -29,11 +29,11 @@ from models import block_height, cowen, jacobian
 #   "btc_etf"   — BTC spot ETF (FBTC, IBIT); value = btc_equiv × projected_btc
 #   "btc_cold"  — cold-storage BTC (INDEX:NQBT); value = btc_qty × projected_btc
 #
-# contracts for options: derived from ref_mv ÷ (ref_price_per_share × 100)
-#   C250: $16,220 ÷ (162.20 × 100) ≈ 1 contract
-#   C350: $33,540 ÷ (111.80 × 100) ≈ 3 contracts
-#   C400: $14,400 ÷ ( 72.00 × 100) ≈ 2 contracts
-#   ASST28C25: $3,160 ÷ (  6.32 × 100) ≈ 5 contracts
+# contracts sourced from Fidelity portfolio export "Shares" column ÷ 100:
+#   C250:     400 shares ÷ 100 = 4 contracts  @ $40.55/share
+#   C350:   1,200 shares ÷ 100 = 12 contracts @ $27.95/share
+#   C400:     600 shares ÷ 100 = 6 contracts  @ $24.00/share
+#   ASST C25: 400 shares ÷ 100 = 4 contracts  @ $7.90/share
 
 POSITIONS: List[dict] = [
     # ── Strategy / MSTR ──────────────────────────────────────────────────────
@@ -210,7 +210,7 @@ def render_portfolio_tab(
         if "btc_qty" in p and btc_price_live:
             return p["btc_qty"] * btc_price_live
         if p["ptype"] == "equity" and "shares" in p:
-            price = mstr_price_live if p["underlying"] == "MSTR" else asst_price_live
+            price = mstr_p_today if p["underlying"] == "MSTR" else asst_p_today
             return p["shares"] * price if price else p["ref_mv"]
         return p["ref_mv"]
 
@@ -288,6 +288,15 @@ def render_portfolio_tab(
     # Exact share counts from Fidelity portfolio export 2026-05-30
     mstr_shares = next(p["shares"] for p in POSITIONS if p["symbol"] == "MSTR")
     asst_shares = next(p["shares"] for p in POSITIONS if p["symbol"] == "ASST")
+
+    # Safe today prices: use live if available and plausible, else fall back to
+    # ref_mv / shares from the CSV (avoids using the wrong equity price as a proxy).
+    _ref_prices = {
+        p["symbol"]: p["ref_mv"] / p["shares"]
+        for p in POSITIONS if p["ptype"] == "equity" and p.get("shares")
+    }
+    mstr_p_today = mstr_price_live if mstr_price_live else _ref_prices.get("MSTR", 159.09)
+    asst_p_today = asst_price_live if asst_price_live else _ref_prices.get("ASST", 17.67)
     # BTC-equivalent quantity for each BTC-denominated position (ETF or cold storage).
     # For cold storage, use the exact known BTC quantity (btc_qty field).
     # For ETFs, derive from today's market value ÷ live BTC price.
@@ -319,7 +328,7 @@ def render_portfolio_tab(
             mstr_proj = btc_to_mstr_fn(btc, qdate, mnav, btc_yield) if btc > 0 else 0.0
 
             # ASST projected proportionally to MSTR (both BTC treasury companies)
-            asst_scale  = asst_price_live / mstr_price_live if mstr_price_live else 1.0
+            asst_scale  = asst_p_today / mstr_p_today if mstr_p_today else 1.0
             asst_proj   = mstr_proj * asst_scale
 
             # Equity values
@@ -427,7 +436,7 @@ def render_portfolio_tab(
     for qdate in q_dates:
         btc = _blend_btc(qdate, sel_quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn)
         mstr_proj = btc_to_mstr_fn(btc, qdate, mnav, btc_yield) if btc > 0 else 0.0
-        asst_scale = asst_price_live / mstr_price_live if mstr_price_live else 1.0
+        asst_scale = asst_p_today / mstr_p_today if mstr_p_today else 1.0
         asst_proj  = mstr_proj * asst_scale
 
         row: dict[str, object] = {"Quarter": _qlabel(qdate)}
@@ -479,7 +488,7 @@ def render_portfolio_tab(
             for qdate in q_dates:
                 btc = _blend_btc(qdate, quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn)
                 mstr_proj = btc_to_mstr_fn(btc, qdate, mnav, btc_yield) if btc > 0 else 0.0
-                asst_scale = asst_price_live / mstr_price_live if mstr_price_live else 1.0
+                asst_scale = asst_p_today / mstr_p_today if mstr_p_today else 1.0
                 S  = mstr_proj if opt_pos["underlying"] == "MSTR" else mstr_proj * asst_scale
                 iv = iv_mstr   if opt_pos["underlying"] == "MSTR" else iv_asst
                 val = _option_value(S, opt_pos["strike"], qdate, opt_pos["expiry"],
