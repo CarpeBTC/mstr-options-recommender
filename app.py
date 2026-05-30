@@ -12,6 +12,7 @@ from models import jacobian, block_height, cowen
 from models.mstr import apply_mnav, btc_to_mstr
 from analytics.kelly import build_portfolio_metrics
 from btc_powerlaw_tab import render_powerlaw_tab
+from portfolio_tab import render_portfolio_tab
 from analytics.options import compute_exit_timing, compute_pnl_heatmap
 
 st.set_page_config(
@@ -115,6 +116,15 @@ with st.spinner(f"Fetching {_equity_name} data..."):
         equity_price = _eq["price"]
         expiries     = _eq["expiries"]
         btc_live = get_btc_price_live()
+        # Fetch the non-selected equity price for the Portfolio tab
+        _other_equity = "ASST" if equity == "MSTR" else "MSTR"
+        try:
+            _other_eq = get_equity_data(_other_equity)
+            _other_equity_price = _other_eq["price"]
+        except Exception:
+            _other_equity_price = None
+        mstr_price_live = equity_price if equity == "MSTR" else _other_equity_price
+        asst_price_live  = equity_price if equity == "ASST"  else _other_equity_price
         st.session_state.fetch_retry_count = 0  # reset on success
     except Exception as e:
         msg = str(e).lower()
@@ -344,7 +354,7 @@ def _model_btc(btc_j, btc_b, btc_c, q_label):
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["Recommendations", "Price Projections", "Strike Detail", "Marginal Return", "BTC Power Law"])
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Recommendations", "Price Projections", "Strike Detail", "Marginal Return", "BTC Power Law", "Portfolio"])
 
 # ════════════════════════════════════════════════════════════════════════════
 # TAB 1: RECOMMENDATIONS
@@ -1017,3 +1027,19 @@ with tab4:
 # ════════════════════════════════════════════════════════════════════════════
 with tab5:
     render_powerlaw_tab()
+
+# ════════════════════════════════════════════════════════════════════════════
+# TAB 6: PORTFOLIO
+# ════════════════════════════════════════════════════════════════════════════
+with tab6:
+    render_portfolio_tab(
+        mstr_price_live=mstr_price_live or equity_price,
+        asst_price_live=asst_price_live or equity_price,
+        use_jacobian=use_jacobian,
+        use_bhm=use_bhm,
+        use_cowen=use_cowen,
+        mnav=mnav,
+        btc_yield=btc_yield,
+        btc_to_mstr_fn=_btc_to_mstr,
+        bhm_price_fn=_get_bhm_price,
+    )
