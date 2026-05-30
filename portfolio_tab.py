@@ -195,6 +195,16 @@ def render_portfolio_tab(
 ) -> None:
     today = date.today()
 
+    # ── Safe today prices (must be defined before _live_mv closure) ───────────
+    # Fall back to CSV-derived ref_mv / shares if live price is unavailable,
+    # preventing the wrong equity's price from being used as a substitute.
+    _ref_prices = {
+        p["symbol"]: p["ref_mv"] / p["shares"]
+        for p in POSITIONS if p["ptype"] == "equity" and p.get("shares")
+    }
+    mstr_p_today = mstr_price_live if mstr_price_live else _ref_prices.get("MSTR", 159.09)
+    asst_p_today = asst_price_live if asst_price_live else _ref_prices.get("ASST", 17.67)
+
     st.subheader("Portfolio — Strategy & Strive Holdings")
     st.caption(
         f"Positions from Fidelity export {today.strftime('%Y-%m-%d')} · "
@@ -289,14 +299,6 @@ def render_portfolio_tab(
     mstr_shares = next(p["shares"] for p in POSITIONS if p["symbol"] == "MSTR")
     asst_shares = next(p["shares"] for p in POSITIONS if p["symbol"] == "ASST")
 
-    # Safe today prices: use live if available and plausible, else fall back to
-    # ref_mv / shares from the CSV (avoids using the wrong equity price as a proxy).
-    _ref_prices = {
-        p["symbol"]: p["ref_mv"] / p["shares"]
-        for p in POSITIONS if p["ptype"] == "equity" and p.get("shares")
-    }
-    mstr_p_today = mstr_price_live if mstr_price_live else _ref_prices.get("MSTR", 159.09)
-    asst_p_today = asst_price_live if asst_price_live else _ref_prices.get("ASST", 17.67)
     # BTC-equivalent quantity for each BTC-denominated position (ETF or cold storage).
     # For cold storage, use the exact known BTC quantity (btc_qty field).
     # For ETFs, derive from today's market value ÷ live BTC price.
