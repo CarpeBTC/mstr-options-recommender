@@ -104,7 +104,8 @@ POSITIONS: List[dict] = [
     dict(symbol="INDEX:NQBT",     name="BTC Cold Storage (NQBT)",      category="Bitcoin",
          ptype="btc_cold",  underlying="BTC",
          strike=None, expiry=None, contracts=None,
-         cost_basis=86_965.69,  ref_mv=88_572.49),
+         btc_qty=1.20595,          # exact BTC held in cold storage wallets
+         cost_basis=86_965.69,  ref_mv=88_572.49),  # ref_mv overridden at render time
 ]
 
 _TOTAL_COST = sum(p["cost_basis"] for p in POSITIONS)
@@ -201,31 +202,45 @@ def render_portfolio_tab(
     )
 
     # ── Holdings Summary Table ────────────────────────────────────────────────
+    # For BTC cold-storage positions with an exact btc_qty, compute live MV from
+    # the current BTC price rather than using the stale CSV reference value.
+    def _live_mv(p: dict) -> float:
+        if "btc_qty" in p and btc_price_live:
+            return p["btc_qty"] * btc_price_live
+        return p["ref_mv"]
+
     rows = []
+    running_cost = 0.0
+    running_mv   = 0.0
     for p in POSITIONS:
-        gl  = p["ref_mv"] - p["cost_basis"]
-        pct = gl / p["cost_basis"] * 100 if p["cost_basis"] else 0.0
+        mv   = _live_mv(p)
+        gl   = mv - p["cost_basis"]
+        pct  = gl / p["cost_basis"] * 100 if p["cost_basis"] else 0.0
         extra = ""
         if p["ptype"] == "call":
             extra = f"  ×{p['contracts']} contract{'s' if p['contracts'] != 1 else ''}"
+        elif "btc_qty" in p:
+            extra = f"  ({p['btc_qty']} BTC)"
         rows.append({
             "Position":     p["name"] + extra,
             "Category":     p["category"],
             "Type":         p["ptype"].capitalize(),
             "Cost Basis":   p["cost_basis"],
-            "Market Value": p["ref_mv"],
+            "Market Value": mv,
             "Gain / Loss":  gl,
             "G/L %":        pct,
         })
+        running_cost += p["cost_basis"]
+        running_mv   += mv
 
     rows.append({
         "Position": "── TOTAL ──",
         "Category": "",
         "Type": "",
-        "Cost Basis": _TOTAL_COST,
-        "Market Value": _TOTAL_MV,
-        "Gain / Loss": _TOTAL_MV - _TOTAL_COST,
-        "G/L %": (_TOTAL_MV - _TOTAL_COST) / _TOTAL_COST * 100,
+        "Cost Basis": running_cost,
+        "Market Value": running_mv,
+        "Gain / Loss": running_mv - running_cost,
+        "G/L %": (running_mv - running_cost) / running_cost * 100,
     })
 
     holdings_df = pd.DataFrame(rows)
@@ -271,12 +286,19 @@ def render_portfolio_tab(
         next(p["ref_mv"] for p in POSITIONS if p["symbol"] == "ASST")
         / asst_price_live if asst_price_live else 0
     )
-    # BTC-equivalent quantity for each BTC-denominated position (ETF or cold storage)
-    # btc_equiv = ref_mv / btc_price_today  →  projected_value = btc_equiv × btc_proj
-    btc_equiv: dict[str, float] = {
-        p["symbol"]: (p["ref_mv"] / btc_price_live if btc_price_live else 0)
-        for p in POSITIONS if p["ptype"] in ("btc_etf", "btc_cold")
-    }
+    # BTC-equivalent quantity for each BTC-denominated position (ETF or cold storage).
+    # For cold storage, use the exact known BTC quantity (btc_qty field).
+    # For ETFs, derive from today's market value ÷ live BTC price.
+    btc_equiv: dict[str, float] = {}
+    for p in POSITIONS:
+        if p["ptype"] not in ("btc_etf", "btc_cold"):
+            continue
+        if "btc_qty" in p:                         # exact quantity known (cold storage)
+            btc_equiv[p["symbol"]] = p["btc_qty"]
+        elif btc_price_live:                        # ETF: infer from market value
+            btc_equiv[p["symbol"]] = p["ref_mv"] / btc_price_live
+        else:
+            btc_equiv[p["symbol"]] = 0.0
 
     # Stable preferred MV (fixed income, held at today's value throughout)
     preferred_mv = sum(p["ref_mv"] for p in POSITIONS if p["ptype"] == "preferred")
