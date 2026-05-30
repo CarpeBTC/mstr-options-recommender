@@ -1,9 +1,10 @@
 """
 Portfolio Performance & Forecast Tab
 
-Tracks MSTR / ASST equity, options, and preferred stock positions sourced from
-the Fidelity export dated 2026-05-30.  Forecasts the distribution of returns at
-each calendar quarter-end through 2028 using the active BTC price model blend.
+Tracks MSTR / ASST equity, options, preferred stock, and direct BTC positions
+sourced from the Fidelity export dated 2026-05-30.  Forecasts the distribution
+of returns at each calendar quarter-end through 2028 using the active BTC price
+model blend.
 """
 from __future__ import annotations
 
@@ -19,12 +20,14 @@ import streamlit as st
 from analytics.options import black_scholes_call
 from models import block_height, cowen, jacobian
 
-# ── Position data (Fidelity export 2026-05-30, MSTR / ASST only) ─────────────
+# ── Position data (Fidelity export 2026-05-30) ───────────────────────────────
 #
-# type:
-#   "equity"    — common shares; value = shares × live_price
-#   "preferred" — fixed-rate preferred; projected value held constant at ref_mv
-#   "call"      — long call option; value via Black-Scholes / intrinsic
+# ptype:
+#   "equity"    — common shares; value = shares × projected_equity_price
+#   "preferred" — fixed-rate preferred; held flat at ref_mv in forecast
+#   "call"      — long call; value via Black-Scholes (pre-expiry) / intrinsic
+#   "btc_etf"   — BTC spot ETF (FBTC, IBIT); value = btc_equiv × projected_btc
+#   "btc_cold"  — cold-storage BTC (INDEX:NQBT); value = btc_qty × projected_btc
 #
 # contracts for options: derived from ref_mv ÷ (ref_price_per_share × 100)
 #   C250: $16,220 ÷ (162.20 × 100) ≈ 1 contract
@@ -84,6 +87,24 @@ POSITIONS: List[dict] = [
          ptype="call",      underlying="ASST",
          strike=25.0, expiry=date(2028, 1, 21), contracts=5,
          cost_basis=3_394.69,   ref_mv=3_160.00),
+
+    # ── Bitcoin (direct / ETF) ────────────────────────────────────────────────
+    # Projected as: btc_equivalent × projected_btc_price
+    # btc_equivalent = ref_mv / btc_live_price  (computed at render time)
+    dict(symbol="FBTC",           name="Fidelity Bitcoin Fund (FBTC)", category="Bitcoin",
+         ptype="btc_etf",   underlying="BTC",
+         strike=None, expiry=None, contracts=None,
+         cost_basis=2_383.55,   ref_mv=2_389.35),
+
+    dict(symbol="IBIT",           name="iShares Bitcoin Trust (IBIT)", category="Bitcoin",
+         ptype="btc_etf",   underlying="BTC",
+         strike=None, expiry=None, contracts=None,
+         cost_basis=5_549.92,   ref_mv=5_318.90),
+
+    dict(symbol="INDEX:NQBT",     name="BTC Cold Storage (NQBT)",      category="Bitcoin",
+         ptype="btc_cold",  underlying="BTC",
+         strike=None, expiry=None, contracts=None,
+         cost_basis=86_965.69,  ref_mv=88_572.49),
 ]
 
 _TOTAL_COST = sum(p["cost_basis"] for p in POSITIONS)
@@ -161,6 +182,7 @@ def _option_value(
 def render_portfolio_tab(
     mstr_price_live: float,
     asst_price_live: float,
+    btc_price_live: float,
     use_jacobian: bool,
     use_bhm: bool,
     use_cowen: bool,
@@ -240,7 +262,7 @@ def render_portfolio_tab(
     # ── Build forecast grid: dates × quantiles ────────────────────────────────
     q_dates = _quarter_end_dates()
 
-    # Derive implied shares from today's live prices and today's reference MV
+    # Derive implied shares / BTC quantities from today's live prices and ref MV
     mstr_shares = (
         next(p["ref_mv"] for p in POSITIONS if p["symbol"] == "MSTR")
         / mstr_price_live if mstr_price_live else 0
@@ -249,6 +271,12 @@ def render_portfolio_tab(
         next(p["ref_mv"] for p in POSITIONS if p["symbol"] == "ASST")
         / asst_price_live if asst_price_live else 0
     )
+    # BTC-equivalent quantity for each BTC-denominated position (ETF or cold storage)
+    # btc_equiv = ref_mv / btc_price_today  →  projected_value = btc_equiv × btc_proj
+    btc_equiv: dict[str, float] = {
+        p["symbol"]: (p["ref_mv"] / btc_price_live if btc_price_live else 0)
+        for p in POSITIONS if p["ptype"] in ("btc_etf", "btc_cold")
+    }
 
     # Stable preferred MV (fixed income, held at today's value throughout)
     preferred_mv = sum(p["ref_mv"] for p in POSITIONS if p["ptype"] == "preferred")
@@ -287,7 +315,12 @@ def render_portfolio_tab(
                     S, c["strike"], qdate, c["expiry"], c["contracts"], iv
                 )
 
-            forecast[quant].append(eq_mstr + eq_asst + opt_total + preferred_mv)
+            # BTC-denominated positions (ETFs + cold storage): qty × projected BTC price
+            btc_total = sum(qty * btc for qty in btc_equiv.values())
+
+            forecast[quant].append(
+                eq_mstr + eq_asst + opt_total + preferred_mv + btc_total
+            )
 
     # ── Total portfolio forecast chart ────────────────────────────────────────
     fig = go.Figure()
@@ -376,12 +409,11 @@ def render_portfolio_tab(
         row: dict[str, object] = {"Quarter": _qlabel(qdate)}
         for p in POSITIONS:
             if p["ptype"] == "equity":
-                if p["underlying"] == "MSTR":
-                    val = mstr_shares * mstr_proj
-                else:
-                    val = asst_shares * asst_proj
+                val = mstr_shares * mstr_proj if p["underlying"] == "MSTR" else asst_shares * asst_proj
             elif p["ptype"] == "preferred":
                 val = p["ref_mv"]
+            elif p["ptype"] in ("btc_etf", "btc_cold"):
+                val = btc_equiv.get(p["symbol"], 0) * btc
             else:  # call
                 S  = mstr_proj if p["underlying"] == "MSTR" else asst_proj
                 iv = iv_mstr   if p["underlying"] == "MSTR" else iv_asst

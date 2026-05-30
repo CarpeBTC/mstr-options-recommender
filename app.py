@@ -1036,6 +1036,7 @@ with tab6:
     render_portfolio_tab(
         mstr_price_live=mstr_price_live or equity_price,
         asst_price_live=asst_price_live or equity_price,
+        btc_price_live=btc_live or 0.0,
         use_jacobian=use_jacobian,
         use_bhm=use_bhm,
         use_cowen=use_cowen,
