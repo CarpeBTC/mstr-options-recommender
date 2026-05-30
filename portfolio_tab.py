@@ -37,74 +37,75 @@ from models import block_height, cowen, jacobian
 
 POSITIONS: List[dict] = [
     # ── Strategy / MSTR ──────────────────────────────────────────────────────
+    # shares / contracts sourced from Fidelity portfolio export 2026-05-30
     dict(symbol="MSTR",           name="Strategy Cl A (MSTR)",        category="Strategy",
-         ptype="equity",    underlying="MSTR",
+         ptype="equity",    underlying="MSTR",  shares=327.441,
          strike=None, expiry=None, contracts=None,
          cost_basis=54_191.25,  ref_mv=52_092.59),
 
     dict(symbol="STRK",           name="Strategy 10% Perp Pfd (STRK)",category="Strategy",
-         ptype="preferred", underlying=None,
+         ptype="preferred", underlying=None,    shares=930,
          strike=None, expiry=None, contracts=None,
          cost_basis=72_958.41,  ref_mv=65_351.10),
 
     dict(symbol="STRF",           name="Strategy 10% Pfd (STRF)",     category="Strategy",
-         ptype="preferred", underlying=None,
+         ptype="preferred", underlying=None,    shares=300,
          strike=None, expiry=None, contracts=None,
          cost_basis=30_217.50,  ref_mv=29_550.00),
 
     dict(symbol="STRC",           name="Strategy 11% Var Pfd (STRC)", category="Strategy",
-         ptype="preferred", underlying=None,
+         ptype="preferred", underlying=None,    shares=500,
          strike=None, expiry=None, contracts=None,
          cost_basis=49_999.08,  ref_mv=49_495.00),
 
+    # Options: "shares" in Fidelity = option shares (1 contract = 100 shares)
     dict(symbol="MSTR271217C250", name="MSTR Dec'27 $250 Call",       category="Strategy",
          ptype="call",      underlying="MSTR",
-         strike=250.0, expiry=date(2027, 12, 17), contracts=1,
+         strike=250.0, expiry=date(2027, 12, 17), contracts=4,   # 400 shares ÷ 100
          cost_basis=17_742.69,  ref_mv=16_220.00),
 
     dict(symbol="MSTR271217C350", name="MSTR Dec'27 $350 Call",       category="Strategy",
          ptype="call",      underlying="MSTR",
-         strike=350.0, expiry=date(2027, 12, 17), contracts=3,
+         strike=350.0, expiry=date(2027, 12, 17), contracts=12,  # 1,200 shares ÷ 100
          cost_basis=35_948.08,  ref_mv=33_540.00),
 
     dict(symbol="MSTR271217C400", name="MSTR Dec'27 $400 Call",       category="Strategy",
          ptype="call",      underlying="MSTR",
-         strike=400.0, expiry=date(2027, 12, 17), contracts=2,
+         strike=400.0, expiry=date(2027, 12, 17), contracts=6,   # 600 shares ÷ 100
          cost_basis=15_604.04,  ref_mv=14_400.00),
 
     # ── Strive / ASST ─────────────────────────────────────────────────────────
     dict(symbol="ASST",           name="Strive Inc Cl A (ASST)",      category="Strive",
-         ptype="equity",    underlying="ASST",
+         ptype="equity",    underlying="ASST",  shares=1_200,
          strike=None, expiry=None, contracts=None,
          cost_basis=18_600.00,  ref_mv=21_204.00),
 
     dict(symbol="SATA",           name="Strive 12.25% Var Pfd (SATA)",category="Strive",
-         ptype="preferred", underlying=None,
+         ptype="preferred", underlying=None,    shares=50,
          strike=None, expiry=None, contracts=None,
          cost_basis=4_900.74,   ref_mv=5_000.50),
 
     dict(symbol="ASST280121C25",  name="ASST Jan'28 $25 Call",        category="Strive",
          ptype="call",      underlying="ASST",
-         strike=25.0, expiry=date(2028, 1, 21), contracts=5,
+         strike=25.0, expiry=date(2028, 1, 21), contracts=4,    # 400 shares ÷ 100
          cost_basis=3_394.69,   ref_mv=3_160.00),
 
     # ── Bitcoin (direct / ETF) ────────────────────────────────────────────────
     # Projected as: btc_equivalent × projected_btc_price
-    # btc_equivalent = ref_mv / btc_live_price  (computed at render time)
     dict(symbol="FBTC",           name="Fidelity Bitcoin Fund (FBTC)", category="Bitcoin",
-         ptype="btc_etf",   underlying="BTC",
+         ptype="btc_etf",   underlying="BTC",  shares=37.392,
          strike=None, expiry=None, contracts=None,
          cost_basis=2_383.55,   ref_mv=2_389.35),
 
     dict(symbol="IBIT",           name="iShares Bitcoin Trust (IBIT)", category="Bitcoin",
-         ptype="btc_etf",   underlying="BTC",
+         ptype="btc_etf",   underlying="BTC",  shares=127.766,
          strike=None, expiry=None, contracts=None,
          cost_basis=5_549.92,   ref_mv=5_318.90),
 
     dict(symbol="INDEX:NQBT",     name="BTC Cold Storage (NQBT)",      category="Bitcoin",
          ptype="btc_cold",  underlying="BTC",
          strike=None, expiry=None, contracts=None,
-         btc_qty=1.20595,          # exact BTC held in cold storage wallets
+         btc_qty=1.20595,          # exact BTC in cold storage wallets (user-confirmed)
          cost_basis=86_965.69,  ref_mv=88_572.49),  # ref_mv overridden at render time
 ]
 
@@ -205,8 +206,12 @@ def render_portfolio_tab(
     # For BTC cold-storage positions with an exact btc_qty, compute live MV from
     # the current BTC price rather than using the stale CSV reference value.
     def _live_mv(p: dict) -> float:
+        """Compute live market value from exact quantities where available."""
         if "btc_qty" in p and btc_price_live:
             return p["btc_qty"] * btc_price_live
+        if p["ptype"] == "equity" and "shares" in p:
+            price = mstr_price_live if p["underlying"] == "MSTR" else asst_price_live
+            return p["shares"] * price if price else p["ref_mv"]
         return p["ref_mv"]
 
     rows = []
@@ -216,11 +221,14 @@ def render_portfolio_tab(
         mv   = _live_mv(p)
         gl   = mv - p["cost_basis"]
         pct  = gl / p["cost_basis"] * 100 if p["cost_basis"] else 0.0
-        extra = ""
         if p["ptype"] == "call":
-            extra = f"  ×{p['contracts']} contract{'s' if p['contracts'] != 1 else ''}"
+            extra = f"  ×{p['contracts']} contracts"
         elif "btc_qty" in p:
-            extra = f"  ({p['btc_qty']} BTC)"
+            extra = f"  ({p['btc_qty']:.5f} BTC)"
+        elif p.get("shares"):
+            extra = f"  ({p['shares']:,g} shares)"
+        else:
+            extra = ""
         rows.append({
             "Position":     p["name"] + extra,
             "Category":     p["category"],
@@ -277,15 +285,9 @@ def render_portfolio_tab(
     # ── Build forecast grid: dates × quantiles ────────────────────────────────
     q_dates = _quarter_end_dates()
 
-    # Derive implied shares / BTC quantities from today's live prices and ref MV
-    mstr_shares = (
-        next(p["ref_mv"] for p in POSITIONS if p["symbol"] == "MSTR")
-        / mstr_price_live if mstr_price_live else 0
-    )
-    asst_shares = (
-        next(p["ref_mv"] for p in POSITIONS if p["symbol"] == "ASST")
-        / asst_price_live if asst_price_live else 0
-    )
+    # Exact share counts from Fidelity portfolio export 2026-05-30
+    mstr_shares = next(p["shares"] for p in POSITIONS if p["symbol"] == "MSTR")
+    asst_shares = next(p["shares"] for p in POSITIONS if p["symbol"] == "ASST")
     # BTC-equivalent quantity for each BTC-denominated position (ETF or cold storage).
     # For cold storage, use the exact known BTC quantity (btc_qty field).
     # For ETFs, derive from today's market value ÷ live BTC price.
