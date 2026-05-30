@@ -1,4 +1,4 @@
-from __future__ import annotations
+from typing import Optional, List
 import numpy as np
 import pandas as pd
 
@@ -111,7 +111,7 @@ def build_portfolio_metrics(strikes: list[float], premiums: dict[float, float],
                              j_scenarios: list[dict], bhm_scenarios: list[dict],
                              kelly_fraction: float, bankroll: float,
                              r_period: float = 0.0,
-                             c_scenarios: list[dict] | None = None) -> pd.DataFrame:
+                             c_scenarios: Optional[List[dict]] = None) -> pd.DataFrame:
     """
     Build the full Portfolio Growth Metrics table.
 

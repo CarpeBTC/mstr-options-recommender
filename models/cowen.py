@@ -1,6 +1,7 @@
-from __future__ import annotations
+from __future__ import annotations  # enables dict[str, ...] syntax on Python 3.9
 import math
 from datetime import date
+from typing import Dict, Tuple, List
 
 # ── Cowen (2026) Asymmetric Quadratic Quantile Regression ──────────────────
 # "Asymmetric Tail Curvature in Bitcoin Price Quantiles"
