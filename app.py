@@ -8,7 +8,7 @@ from datetime import date, datetime, timedelta
 
 from functools import partial
 from data.fetch import get_equity_data, get_option_chain, get_last_updated, get_btc_price_live, get_strategy_holdings, get_asst_holdings, get_block_height_live
-from models import jacobian, block_height
+from models import jacobian, block_height, cowen
 from models.mstr import apply_mnav, btc_to_mstr
 from analytics.kelly import build_portfolio_metrics
 from btc_powerlaw_tab import render_powerlaw_tab
@@ -87,7 +87,18 @@ st.sidebar.markdown(
 )
 kelly_frac = st.sidebar.slider("Kelly Fraction", 0.1, 1.0, 0.5, 0.05,
                                 help="0.5 = half-Kelly (recommended)")
-model_choice = st.sidebar.selectbox("Price Model", ["Blended", "Jacobian", "Block Height"])
+st.sidebar.markdown("**Price Models** *(blend checked)*")
+use_jacobian = st.sidebar.checkbox("Jacobian", value=True)
+use_bhm      = st.sidebar.checkbox("Block Height", value=True)
+use_cowen    = st.sidebar.checkbox(
+    "Cowen (2026)",
+    value=False,
+    help="Asymmetric quadratic quantile regression — upper-tail (Q75–Q99) curves "
+         "downward vs. linear power law, correcting ~+32% optimistic bias 2019–2026.",
+)
+# Ensure at least one model is always active
+if not any([use_jacobian, use_bhm, use_cowen]):
+    use_jacobian = True
 st.sidebar.markdown("---")
 btc_yield = st.sidebar.slider(f"{equity} BTC Yield Yr 1 (%)", 0, 30, 10, 1) / 100
 
@@ -178,9 +189,11 @@ with st.spinner(f"Fetching {equity} option chain..."):
 
 j_scenarios_raw = jacobian.get_scenario_prices(expiry_date)
 b_scenarios_raw = _get_bhm_scenarios(expiry_date)
+c_scenarios_raw = cowen.get_scenario_prices(expiry_date)
 
 j_scenarios = _apply_mnav(j_scenarios_raw, expiry_date, mnav, btc_yield)
 b_scenarios = _apply_mnav(b_scenarios_raw, expiry_date, mnav, btc_yield)
+c_scenarios = _apply_mnav(c_scenarios_raw, expiry_date, mnav, btc_yield)
 
 # ── Spread % and Entry Price ──────────────────────────────────────────────────
 
@@ -240,8 +253,26 @@ r_period = (1 + alt_return) ** T_years - 1   # e.g. 4.3%/yr × ~1.75yr → ~7.7%
 # Build portfolio metrics once — reused by Tab 1, Tab 3, Tab 4
 # r_period drives excess-return Kelly; E[R] columns remain raw for display
 metrics_df = build_portfolio_metrics(
-    strikes, premiums, j_scenarios, b_scenarios, kelly_frac, bankroll, r_period
+    strikes, premiums, j_scenarios, b_scenarios, kelly_frac, bankroll, r_period,
+    c_scenarios=c_scenarios,
 )
+
+# ── Selected-blend E[R] and Kelly — averaged across checked models ────────────
+_er_parts  = [metrics_df[col] for flag, col in
+              [(use_jacobian, "Jac E[R]"), (use_bhm, "BHM E[R]"), (use_cowen, "Cowen E[R]")]
+              if flag and col in metrics_df.columns]
+_kf_parts  = [metrics_df[col] for flag, col in
+              [(use_jacobian, "Jac Kelly f*"), (use_bhm, "BHM Kelly f*"), (use_cowen, "Cowen Kelly f*")]
+              if flag and col in metrics_df.columns]
+
+metrics_df["Selected E[R]"]    = sum(_er_parts) / len(_er_parts)
+metrics_df["Selected Kelly f*"] = sum(_kf_parts) / len(_kf_parts)
+
+# Recompute Adj. Kelly, $ Allocated, and Contracts from the selected blend
+metrics_df["Adj. Kelly"]  = (metrics_df["Selected Kelly f*"] * kelly_frac).round(4)
+metrics_df["$ Allocated"] = (metrics_df["Adj. Kelly"] * bankroll).round(0)
+_cc_s = pd.Series({s: premiums.get(s, 1) * 100 for s in metrics_df.index})
+metrics_df["Contracts"]   = (metrics_df["$ Allocated"] / _cc_s).apply(lambda x: max(0, int(x)))
 
 # Attach Spread %, stale flag, and Open Interest from full chain
 _spread_map = dict(zip(chain_df["strike"], chain_df["spread_pct"]))
@@ -251,8 +282,8 @@ metrics_df["Spread %"]      = metrics_df.index.map(_spread_map)
 metrics_df["_is_stale"]     = metrics_df.index.map(_stale_map).fillna(False)
 metrics_df["Open Interest"] = metrics_df.index.map(_oi_map).fillna(0).astype(int)
 
-# Attach Marginal Return Efficiency column (Blended E[R] basis, strikes sorted ascending)
-_mdf_s = metrics_df["Blended E[R]"].sort_index()
+# Attach Marginal Return Efficiency column (Selected E[R] basis, strikes sorted ascending)
+_mdf_s = metrics_df["Selected E[R]"].sort_index()
 _ks_m, _ers_m = _mdf_s.index.tolist(), _mdf_s.tolist()
 _marg_map = {}
 for _i in range(1, len(_ks_m)):
@@ -284,6 +315,31 @@ def _build_blended_scenarios(j_scenarios: list[dict], b_scenarios: list[dict]) -
     for s in all_s:
         s["prob"] /= total
     return all_s
+
+
+# ── Shared model label + BTC price helper (used by all tabs) ─────────────────
+
+_active_model_names = [n for flag, n in
+                       [(use_jacobian, "Jacobian"), (use_bhm, "BHM"), (use_cowen, "Cowen")]
+                       if flag]
+_model_lbl = " + ".join(_active_model_names)
+
+# Precompute BTC prices for today and expiry across all models
+_j_btc_today  = jacobian.get_btc_price(date.today())
+_b_btc_today  = _get_bhm_price(date.today())
+_c_btc_today  = cowen.get_btc_price(date.today())
+_j_btc_expiry = jacobian.get_btc_price(expiry_date)
+_b_btc_expiry = _get_bhm_price(expiry_date)
+_c_btc_expiry = cowen.get_btc_price(expiry_date)
+
+
+def _model_btc(btc_j, btc_b, btc_c, q_label):
+    """Return average BTC price across all checked models at a given quantile label."""
+    vals = []
+    if use_jacobian and btc_j.get(q_label): vals.append(btc_j[q_label])
+    if use_bhm      and btc_b.get(q_label): vals.append(btc_b[q_label])
+    if use_cowen    and btc_c.get(q_label): vals.append(btc_c[q_label])
+    return float(np.mean(vals)) if vals else None
 
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
@@ -331,39 +387,33 @@ with tab1:
             from data.fetch import ASST_BTC_HOLDINGS, ASST_FULLY_DILUTED_SHARES_K
             _src = f"{_co_name} BTC: {ASST_BTC_HOLDINGS:,} · Diluted Shares: {ASST_FULLY_DILUTED_SHARES_K:,}K (hardcoded fallback — {_data_src_url} unavailable)"
     _blk = f"Block Height: {_live_block_height:,} (live)" if _live_block_height else "Block Height: estimated (API unavailable)"
-    st.caption(f"Data as of {get_last_updated()} | Model: Blended (Jacobian + Block Height) | {_src} | {_blk}")
+    st.caption(f"Data as of {get_last_updated()} | Models: {_model_lbl} | {_src} | {_blk}")
     st.markdown("---")
 
     # ── Price Targets Summary ──
     st.subheader(f"{equity} Price Targets at Expiry")
 
     today = date.today()
-    j_btc_today   = jacobian.get_btc_price(today)
-    b_btc_today   = _get_bhm_price(today)
-    j_btc_expiry  = jacobian.get_btc_price(expiry_date)
-    b_btc_expiry  = _get_bhm_price(expiry_date)
-    # btc_live already fetched at startup
+    # Use precomputed BTC prices from shared section
+    j_btc_today  = _j_btc_today;  b_btc_today  = _b_btc_today;  c_btc_today  = _c_btc_today
+    j_btc_expiry = _j_btc_expiry; b_btc_expiry = _b_btc_expiry; c_btc_expiry = _c_btc_expiry
 
     display_quantiles = ["q=0.01", "q=0.25", "OLS", "q=0.75", "q=0.99"]
     _q_nums = {"q=0.01": 0.01, "q=0.25": 0.25, "OLS": 0.50, "q=0.75": 0.75, "q=0.99": 0.99}
-    # Short label for column headers
-    _model_lbl = {"Jacobian": "Jacobian", "Block Height": "BHM", "Blended": "Blended"}[model_choice]
 
-    def _model_btc(btc_j, btc_b, q_label):
-        """Return BTC price for the active model at a given quantile label."""
-        if model_choice == "Jacobian":
-            return btc_j.get(q_label)
-        elif model_choice == "Block Height":
-            return btc_b.get(q_label)
-        else:  # Blended
-            vals = [x for x in [btc_j.get(q_label), btc_b.get(q_label)] if x]
-            return float(np.mean(vals)) if vals else None
+    def _model_btc(btc_j, btc_b, btc_c, q_label):
+        """Return average BTC price across all checked models at a given quantile label."""
+        vals = []
+        if use_jacobian and btc_j.get(q_label): vals.append(btc_j[q_label])
+        if use_bhm      and btc_b.get(q_label): vals.append(btc_b[q_label])
+        if use_cowen    and btc_c.get(q_label): vals.append(btc_c[q_label])
+        return float(np.mean(vals)) if vals else None
 
     # Estimate today's quantile position from live BTC vs model band
     today_q_str = None
     today_q_num = -1.0   # fallback: sorts before all quantile rows
     if btc_live:
-        _qp = [(q, _model_btc(j_btc_today, b_btc_today, q)) for q in display_quantiles]
+        _qp = [(q, _model_btc(j_btc_today, b_btc_today, c_btc_today, q)) for q in display_quantiles]
         _qp = [(q, p) for q, p in _qp if p]
         _qp.sort(key=lambda x: _q_nums[x[0]])
         if _qp:
@@ -399,9 +449,9 @@ with tab1:
     })
     # Quantile rows
     for q in display_quantiles:
-        btc_t  = _model_btc(j_btc_today,  b_btc_today,  q)
+        btc_t  = _model_btc(j_btc_today,  b_btc_today,  c_btc_today,  q)
         mstr_t = _btc_to_mstr(btc_t,  today,       _current_mnav, btc_yield) if btc_t  else None
-        btc_e  = _model_btc(j_btc_expiry, b_btc_expiry, q)
+        btc_e  = _model_btc(j_btc_expiry, b_btc_expiry, c_btc_expiry, q)
         mstr_e = _btc_to_mstr(btc_e,  expiry_date, mnav, btc_yield) if btc_e  else None
         target_rows.append({
             "Scenario":   q,
@@ -433,8 +483,8 @@ with tab1:
 
     # ── Replace unselected-model E[R] cols with q=0.25 / selected avg / q=0.75 ──────
     # Point return: what you'd earn IF the MSTR price hits exactly the q=X target
-    _btc_q25_d = _model_btc(j_btc_expiry, b_btc_expiry, "q=0.25")
-    _btc_q75_d = _model_btc(j_btc_expiry, b_btc_expiry, "q=0.75")
+    _btc_q25_d = _model_btc(j_btc_expiry, b_btc_expiry, c_btc_expiry, "q=0.25")
+    _btc_q75_d = _model_btc(j_btc_expiry, b_btc_expiry, c_btc_expiry, "q=0.75")
     _mstr_q25_d = _btc_to_mstr(_btc_q25_d, expiry_date, mnav, btc_yield) if _btc_q25_d else None
     _mstr_q75_d = _btc_to_mstr(_btc_q75_d, expiry_date, mnav, btc_yield) if _btc_q75_d else None
 
@@ -449,10 +499,13 @@ with tab1:
         display_df.index.map(lambda k: _pt_r(_mstr_q75_d, k, premiums.get(k, 1)))
         if _mstr_q75_d else np.nan
     )
-    # Keep only the selected model's probability-weighted E[R]; drop the other two
-    _sel_er = {"Jacobian": "Jac E[R]", "Block Height": "BHM E[R]", "Blended": "Blended E[R]"}[model_choice]
-    display_df = display_df.rename(columns={_sel_er: f"{_model_lbl} E[R]"})
-    display_df = display_df.drop(columns=[c for c in ["Jac E[R]", "BHM E[R]", "Blended E[R]"] if c in display_df.columns and c != _sel_er])
+    # Show the selected-blend E[R]; drop all individual model E[R] columns
+    display_df = display_df.rename(columns={"Selected E[R]": f"{_model_lbl} E[R]"})
+    display_df = display_df.drop(
+        columns=[c for c in ["Jac E[R]", "BHM E[R]", "Blended E[R]", "Cowen E[R]", "Selected E[R]"]
+                 if c in display_df.columns],
+        errors="ignore",
+    )
     # ─────────────────────────────────────────────────────────────────────────────────
 
     # Strike index stays numeric so Streamlit sorts it correctly; formatted via column_config below
@@ -468,10 +521,14 @@ with tab1:
     display_df["Spread %"] = display_df.apply(_fmt_spread, axis=1)
     display_df = display_df.drop(columns=["_is_stale"], errors="ignore")
 
-    # Keep only the selected model's Kelly f*; drop the other two
-    _sel_kf = {"Jacobian": "Jac Kelly f*", "Block Height": "BHM Kelly f*", "Blended": "Blended Kelly f*"}[model_choice]
-    display_df = display_df.rename(columns={_sel_kf: "Kelly f*"})
-    display_df = display_df.drop(columns=[c for c in ["Jac Kelly f*", "BHM Kelly f*", "Blended Kelly f*"] if c in display_df.columns and c != _sel_kf])
+    # Show the selected-blend Kelly f*; drop all individual model Kelly columns
+    display_df = display_df.rename(columns={"Selected Kelly f*": "Kelly f*"})
+    display_df = display_df.drop(
+        columns=[c for c in ["Jac Kelly f*", "BHM Kelly f*", "Blended Kelly f*",
+                             "Cowen Kelly f*", "Selected Kelly f*"]
+                 if c in display_df.columns],
+        errors="ignore",
+    )
 
     # Scale Kelly columns from fraction to percentage points (0.123 → 12.3) for display
     display_df["Kelly f*"]   = display_df["Kelly f*"]   * 100
@@ -479,7 +536,8 @@ with tab1:
     display_df["Contracts"]  = display_df["Contracts"].astype(int)
 
     # Reorder: Premium → Marg. Efficiency → Spread % → Open Interest → R @ q=0.25 → {model} E[R] → R @ q=0.75 → rest
-    _er_cols    = ["R @ q=0.25", f"{_model_lbl} E[R]", "R @ q=0.75"]
+    _er_col_lbl = f"{_model_lbl} E[R]"
+    _er_cols    = ["R @ q=0.25", _er_col_lbl, "R @ q=0.75"]
     _front      = ["Premium", "Marg. Efficiency", "Spread %", "Open Interest"]
     _other_cols = [c for c in display_df.columns if c not in _front + _er_cols]
     display_df  = display_df[_front + _er_cols + _other_cols]
@@ -491,7 +549,7 @@ with tab1:
         "Marg. Efficiency":     st.column_config.NumberColumn("Marg. Efficiency",     format="%.3f"),
         "Open Interest":        st.column_config.NumberColumn("Open Interest",         format="%d"),
         "R @ q=0.25":           st.column_config.NumberColumn("R @ q=0.25",           format="%.2fx"),
-        f"{_model_lbl} E[R]":   st.column_config.NumberColumn(f"{_model_lbl} E[R]",  format="%.2fx"),
+        _er_col_lbl:            st.column_config.NumberColumn(_er_col_lbl,           format="%.2fx"),
         "R @ q=0.75":           st.column_config.NumberColumn("R @ q=0.75",           format="%.2fx"),
         "Kelly f*":             st.column_config.NumberColumn("Kelly f*",              format="%.1f%%"),
         "Adj. Kelly":           st.column_config.NumberColumn("Adj. Kelly",            format="%.1f%%"),
@@ -522,10 +580,12 @@ with tab2:
 
     j_quants_to_plot = ["q=0.01", "q=0.25", "OLS", "q=0.75", "q=0.99"]
     b_quants_to_plot = ["q=0.01", "q=0.25", "OLS", "q=0.75", "q=0.99"]
+    c_quants_to_plot = ["q=0.01", "q=0.25", "q=0.50", "q=0.75", "q=0.99"]
 
     fig_btc = go.Figure()
     colors_j = ["#d62728", "#ff7f0e", "#F7931A", "#2ca02c", "#1f77b4"]
     colors_b = ["#9467bd", "#c5b0d5", "#aec7e8", "#98df8a", "#ffbb78"]
+    colors_c = ["#b22222", "#20b2aa", "#00ced1", "#3cb371", "#008b8b"]
 
     for q, color in zip(j_quants_to_plot, colors_j):
         prices = [jacobian.get_btc_price(d).get(q, 0) for d in proj_dates]
@@ -542,6 +602,13 @@ with tab2:
         fig_btc.add_trace(go.Scatter(
             x=proj_dates, y=prices_b, name=f"BHM {q}",
             line=dict(color=color, dash="dash"), mode="lines"
+        ))
+
+    for q, color in zip(c_quants_to_plot, colors_c):
+        prices_c = [cowen.get_btc_price(d).get(q, 0) for d in proj_dates]
+        fig_btc.add_trace(go.Scatter(
+            x=proj_dates, y=prices_c, name=f"Cowen {q}",
+            line=dict(color=color, dash="dot"), mode="lines"
         ))
 
     # add_vline needs string dates when x-axis uses date objects
@@ -570,6 +637,9 @@ with tab2:
                       for q in j_quants_to_plot}
     b_mstr_targets = {q: _btc_to_mstr(_get_bhm_price(expiry_date).get(q, 0), expiry_date, mnav, btc_yield)
                       for q in b_quants_to_plot if q in _get_bhm_price(expiry_date)}
+    _c_exp = cowen.get_btc_price(expiry_date)
+    c_mstr_targets = {q: _btc_to_mstr(_c_exp.get(q, 0), expiry_date, mnav, btc_yield)
+                      for q in c_quants_to_plot if _c_exp.get(q, 0) > 0}
 
     fig_mstr = go.Figure()
     fig_mstr.add_trace(go.Bar(
@@ -579,6 +649,10 @@ with tab2:
     fig_mstr.add_trace(go.Bar(
         x=list(b_mstr_targets.keys()), y=list(b_mstr_targets.values()),
         name="Block Height", marker_color="#7B2D8B", opacity=0.85
+    ))
+    fig_mstr.add_trace(go.Bar(
+        x=list(c_mstr_targets.keys()), y=list(c_mstr_targets.values()),
+        name="Cowen", marker_color="#00ced1", opacity=0.85
     ))
     fig_mstr.add_hline(y=equity_price, line_dash="dot", line_color="white",
                        annotation_text=f"Current ${equity_price:.0f}")
@@ -623,11 +697,10 @@ with tab2:
 # TAB 3: STRIKE DETAIL — Investment vs Expected Return
 # ════════════════════════════════════════════════════════════════════════════
 with tab3:
-    st.subheader(f"Investment vs. Expected Return Multiple — {model_choice} Model")
+    st.subheader(f"Investment vs. Expected Return Multiple — {_model_lbl} Model")
     st.caption(f"Option Expiry: {selected_expiry} · mNAV: {mnav:.1f}x · Kelly Fraction: {kelly_frac:.0%}")
 
-    # Re-use the same metrics_df computed in Tab 1
-    er_col = {"Jacobian": "Jac E[R]", "Block Height": "BHM E[R]", "Blended": "Blended E[R]"}[model_choice]
+    er_col = "Selected E[R]"
 
     # Filter to strikes with positive allocation and E[R], within a sensible price range
     plot_df = metrics_df[
@@ -688,7 +761,7 @@ with tab3:
             hovertemplate=(
                 "<b>Strike: %{customdata[0]:$,.0f}</b><br>"
                 "Investment: %{x:$,.0f}<br>"
-                "E[Return] (" + model_choice + "): <b>%{y:.2f}x</b><br>"
+                "E[Return] (" + _model_lbl + "): <b>%{y:.2f}x</b><br>"
                 "Mid Premium: %{customdata[1]:$,.2f}<br>"
                 "Contracts: %{customdata[2]}<br>"
                 "Adj. Kelly: %{customdata[3]:.1f}%<br>"
@@ -718,7 +791,7 @@ with tab3:
 
         fig.update_layout(
             title=dict(
-                text=f"Investment vs. Expected Return — {model_choice} Model<br>"
+                text=f"Investment vs. Expected Return — {_model_lbl} Model<br>"
                      f"<sup>Expiry {selected_expiry} · mNAV {mnav:.1f}x · "
                      f"Bubble size = contracts · Color = moneyness</sup>",
                 font=dict(size=16),
@@ -730,7 +803,7 @@ with tab3:
                 gridcolor="rgba(255,255,255,0.08)",
             ),
             yaxis=dict(
-                title=f"Expected Return Multiple — {model_choice}",
+                title=f"Expected Return Multiple — {_model_lbl}",
                 ticksuffix="x",
                 gridcolor="rgba(255,255,255,0.08)",
                 autorange=True,
@@ -761,7 +834,7 @@ with tab3:
         st.caption(
             f"Each point is one strike. X = Kelly-recommended dollar allocation "
             f"(Blended f* × {kelly_frac:.0%} × \\${bankroll:,.0f}). "
-            f"Y = E[R] from {model_choice} model scenarios. "
+            f"Y = E[R] from {_model_lbl} model scenarios. "
             f"Bubble size scales with number of contracts. "
             f"Current {equity}: \\${equity_price:,.2f}."
         )
@@ -771,12 +844,12 @@ with tab3:
 # TAB 4: MARGINAL RETURN EFFICIENCY
 # ════════════════════════════════════════════════════════════════════════════
 with tab4:
-    st.subheader(f"Marginal Return Efficiency — {model_choice} Model")
+    st.subheader(f"Marginal Return Efficiency — {_model_lbl} Model")
     st.caption(
         f"Option Expiry: {selected_expiry} · mNAV: {mnav:.1f}x · Kelly Fraction: {kelly_frac:.0%}"
     )
 
-    er_col4 = {"Jacobian": "Jac E[R]", "Block Height": "BHM E[R]", "Blended": "Blended E[R]"}[model_choice]
+    er_col4 = "Selected E[R]"
 
     # Sort by strike ascending, keep only positive E[R] strikes in a sensible range
     marg_df = metrics_df[[er_col4, "$ Allocated", "Premium", "Contracts"]].copy()
@@ -860,7 +933,7 @@ with tab4:
                     hovertemplate=(
                         "<b>Strike: $%{x:,.0f}</b><br>"
                         "Marginal Efficiency: <b>%{y:.3f}</b><br>"
-                        f"E[R] ({model_choice}): %{{customdata[0]:.2f}}x<br>"
+                        f"E[R] ({_model_lbl}): %{{customdata[0]:.2f}}x<br>"
                         "Kelly Allocation: $%{customdata[1]:,.0f}<br>"
                         "<extra></extra>"
                     ),
@@ -895,7 +968,7 @@ with tab4:
                 fig_marg.update_layout(
                     title=dict(
                         text=(
-                            f"Marginal E[R] Efficiency by Strike — {model_choice} Model<br>"
+                            f"Marginal E[R] Efficiency by Strike — {_model_lbl} Model<br>"
                             f"<sup>(% change in E[R]) ÷ (% change in strike) · "
                             f"Peak = best return improvement per unit of additional strike</sup>"
                         ),
@@ -926,7 +999,7 @@ with tab4:
                 c1, c2, c3, c4 = st.columns(4)
                 c1.metric("Peak Efficiency Strike", f"${peak_idx:,.0f}")
                 c2.metric("Efficiency Ratio at Peak", f"{peak_val:.3f}")
-                c3.metric(f"E[R] at Peak ({model_choice})", f"{peak_er:.2f}x")
+                c3.metric(f"E[R] at Peak ({_model_lbl})", f"{peak_er:.2f}x")
                 c4.metric("Kelly Allocation at Peak", f"${peak_alloc:,.0f}")
 
                 n_clipped = len(ratios_raw) - len(ratios)

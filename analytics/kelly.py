@@ -1,3 +1,4 @@
+from __future__ import annotations
 import numpy as np
 import pandas as pd
 
@@ -109,7 +110,8 @@ def allocate(kelly_fractions: pd.Series, bankroll: float) -> pd.Series:
 def build_portfolio_metrics(strikes: list[float], premiums: dict[float, float],
                              j_scenarios: list[dict], bhm_scenarios: list[dict],
                              kelly_fraction: float, bankroll: float,
-                             r_period: float = 0.0) -> pd.DataFrame:
+                             r_period: float = 0.0,
+                             c_scenarios: list[dict] | None = None) -> pd.DataFrame:
     """
     Build the full Portfolio Growth Metrics table.
 
@@ -117,9 +119,14 @@ def build_portfolio_metrics(strikes: list[float], premiums: dict[float, float],
     Kelly f* and $ Allocated use EXCESS returns (R - r_period) so the
     opportunity cost of non-invested capital is priced into the allocation.
 
-    Columns: Premium | Jac E[R] | BHM E[R] | Blended E[R] |
-             Jac Kelly f* | BHM Kelly f* | Blended Kelly f* |
+    Columns: Premium | Jac E[R] | BHM E[R] | Blended E[R] | [Cowen E[R]] |
+             Jac Kelly f* | BHM Kelly f* | Blended Kelly f* | [Cowen Kelly f*] |
              Adj. Kelly | $ Allocated | Contracts
+
+    When c_scenarios is provided (Cowen model), "Cowen E[R]" and "Cowen Kelly f*"
+    columns are appended. Adj. Kelly and $ Allocated still derive from Blended
+    (Jac + BHM average) for backward compatibility; app.py overrides these when
+    model_choice == "Cowen".
     """
     j_probs = {s["label"]: s["prob"] for s in j_scenarios}
     b_probs = {s["label"]: s["prob"] for s in bhm_scenarios}
@@ -156,5 +163,17 @@ def build_portfolio_metrics(strikes: list[float], premiums: dict[float, float],
         "Contracts": contracts,
     }, index=valid_strikes)
     df.index.name = "Strike"
+
+    # ── Cowen model columns (optional) ──────────────────────────────────────
+    if c_scenarios is not None:
+        c_probs = {s["label"]: s["prob"] for s in c_scenarios}
+        c_returns = compute_returns(strikes, premiums, c_scenarios)
+        c_valid = [s for s in valid_strikes if s in c_returns.index]
+        c_er = expected_return(c_returns.loc[c_valid], c_probs).reindex(valid_strikes)
+        c_kelly_full = single_asset_kelly_full(
+            c_returns.loc[c_valid], c_probs, r_period
+        ).reindex(valid_strikes, fill_value=0.0)
+        df["Cowen E[R]"]    = c_er.round(2)
+        df["Cowen Kelly f*"] = c_kelly_full.round(4)
 
     return df.sort_values("$ Allocated", ascending=False)

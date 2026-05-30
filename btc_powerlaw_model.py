@@ -84,59 +84,68 @@ class LogPeriodicParams:
     """
     Layer 2: Log-periodic (DSI) oscillation parameters.
 
-    Full model equation (slide deck):
+    Full model equation (Perrenod 2026):
       log10 P(A) = [power law] + decay(A) · [A0·cos(ω0·ln(A) + φ0)
-                                            + A1·cos(ω1·ln(A) + φ1)]
+                                            + A1·cos(2ω0·ln(A) + φ1)
+                                            + A2·cos(4ω0·ln(A) + φ2)]
 
     where:
-      ω0 = 2π / ln(λ) = 8.63   (fundamental, NOT a free parameter)
-      ω1 ≈ 3.5 · ω0 ≈ 30.2     (harmonic shown on slide)
+      λ  = 2.0076              — bubble-peak spacing ratio, derived from 4 published
+                                  peak ages (t1=2.41, t2=4.83, t3=9.71, t4=19.5 yrs);
+                                  internally consistent to < 0.1% — HIGH CONFIDENCE
+      ω0 = 2π / ln(λ) = 9.0155 — fundamental frequency, derived from λ — HIGH CONFIDENCE
+      2ω0, 4ω0                 — true harmonics (rolling 4-yr window fit from slides)
+      φ0 = 4.6407 ± 0.006      — derived from peak alignment — HIGH CONFIDENCE
       decay(A) = overall_scale / (A + decay_offset)
 
-    Amplitude/phase values (A0, A1, φ0, φ1) are estimated from
-    Perrenod's published residual fits. The overall_scale and
-    decay_offset come from his March 2026 Substack.
-
     ⚠️  CALIBRATION NOTE:
-    Perrenod has not published exact A0/φ0/A1/φ1 values publicly.
-    The values below are best estimates from:
-      - His published charts showing ~0.10–0.15 dex oscillation amplitude
-      - The RMS reduction table on the slide (0.15 → 0.11 → 0.077 dex)
-      - Visual inspection of his Figure 1 residual fit
-    These should be re-fit when exact parameters are available.
-    Flag NEEDS_CALIBRATION = True to surface a warning in the UI.
+    λ, ω0, and φ0 are now HIGH CONFIDENCE (derived from published Perrenod slides).
+    The following still require calibration against exact fit data:
+      - φ1, φ2  (2ω0 and 4ω0 phase offsets) — currently estimated
+      - A0, A1, A2 amplitudes — estimated from published figure visual inspection
+    Flag NEEDS_CALIBRATION = True to surface a warning in the UI until exact
+    amplitude/phase values are confirmed from Perrenod's calibration data.
     """
-    NEEDS_CALIBRATION: bool = True   # flip to False after exact fit
+    NEEDS_CALIBRATION: bool = True   # flip to False after φ1/φ2/A0-A2 are confirmed
 
-    # Fundamental mode
-    lambda_spacing: float = 2.07    # bubble-peak spacing ratio (measured)
-    omega_0: float = field(init=False)   # derived from lambda
+    # Fundamental mode — HIGH CONFIDENCE (derived from 4 published peak ages)
+    lambda_spacing: float = 2.0076  # bubble-peak spacing ratio
+    omega_0: float = field(init=False)   # derived: 2π/ln(λ) = 9.0155
 
-    # Harmonic mode frequency multiplier (from slide: "effective local ~3.5 × ω₀")
-    harmonic_multiplier: float = 3.5
+    # Amplitude pre-decay scales (dex units) — estimated from published figures.
+    # These are PRE-DECAY values; effective amplitude = A_nominal * decay(A).
+    # At age 9.71 (2017 peak): decay ≈ 0.085, so A0_nominal=1.2 → ~0.10 dex signal.
+    # At age 19.5 (2028 peak): decay ≈ 0.047, so combined → ~0.098 dex signal.
+    # Still estimated — needs calibration against Perrenod's exact residual fit.
+    A0_nominal: float = 1.2         # fundamental (ω0) pre-decay amplitude
+    A1_nominal: float = 0.6         # 2ω0 harmonic pre-decay amplitude — estimated
+    A2_nominal: float = 0.3         # 4ω0 harmonic pre-decay amplitude — estimated
 
-    # Amplitude estimates (dex units) — estimated from published figures
-    # Fundamental amplitude declines with age; ~0.12 dex at current age
-    A0_nominal: float = 0.12        # fundamental amplitude scale
-    A1_nominal: float = 0.06        # harmonic amplitude scale (roughly half)
-
-    # Phase offsets (radians) — estimated to place 2017/2021 peaks correctly
-    # φ0 tuned so cos(ω0·ln(A_2017)) ≈ +1 (peak)
-    # A_2017 ≈ 9.0 yrs → ln(9.0) ≈ 2.197 → ω0·ln = 8.63·2.197 ≈ 18.96 rad
-    # cos(18.96 + φ0) = +1 → φ0 ≈ -(18.96 mod 2π) ≈ -0.96 + 2π ≈ 5.32
-    phi_0: float = 5.32             # fundamental phase (radians)
-    phi_1: float = 1.85             # harmonic phase (radians) — estimated
+    # Phase offsets (radians)
+    # φ0 derived: peak alignment from 4 published peak ages — HIGH CONFIDENCE
+    # φ1, φ2 derived: require all harmonics to peak simultaneously at t1–t4
+    #   φ1 = 2π×9  − 2ω0×ln(19.5) = 56.549 − 53.559 = 2.990
+    #   φ2 = 2π×17 − 4ω0×ln(19.5) = 106.814 − 107.118 = −0.304  (≡ 5.979 mod 2π)
+    phi_0: float = 4.6407           # fundamental phase (radians) ± 0.006 — HIGH CONFIDENCE
+    phi_1: float = 2.990            # 2ω0 phase — derived from peak coherence
+    phi_2: float = -0.304           # 4ω0 phase — derived from peak coherence
 
     # Amplitude decay envelope: overall_scale / (A + decay_offset)
     overall_scale: float = 1.0      # dimensionless multiplier
     decay_offset:  float = 2.0      # years (from Perrenod: "~1/(A+2.0)")
 
     def __post_init__(self):
-        self.omega_0 = 2 * np.pi / np.log(self.lambda_spacing)   # = 8.63
+        self.omega_0 = 2 * np.pi / np.log(self.lambda_spacing)   # ≈ 9.0155
 
     @property
     def omega_1(self) -> float:
-        return self.harmonic_multiplier * self.omega_0
+        """2nd harmonic: 2 × ω0 (true harmonic from rolling 4-yr window fit)."""
+        return 2.0 * self.omega_0
+
+    @property
+    def omega_2(self) -> float:
+        """4th harmonic: 4 × ω0 (true harmonic from rolling 4-yr window fit)."""
+        return 4.0 * self.omega_0
 
 
 @dataclass
@@ -239,14 +248,17 @@ class BitcoinPowerLawModel:
         This is added ON TOP of the power law trend.
 
         log_periodic(A) = [1/(A + decay_offset)] ×
-                          [A0·cos(ω0·ln(A) + φ0) + A1·cos(ω1·ln(A) + φ1)]
+                          [A0·cos(ω0·ln(A)  + φ0)   ← fundamental
+                         + A1·cos(2ω0·ln(A) + φ1)   ← 2nd harmonic
+                         + A2·cos(4ω0·ln(A) + φ2)]  ← 4th harmonic
         """
         lp = self.lp
-        decay   = lp.overall_scale / (A + lp.decay_offset)
-        ln_A    = np.log(A)   # natural log
-        fund    = lp.A0_nominal * np.cos(lp.omega_0 * ln_A + lp.phi_0)
-        harmonic = lp.A1_nominal * np.cos(lp.omega_1 * ln_A + lp.phi_1)
-        return decay * (fund + harmonic)
+        decay    = lp.overall_scale / (A + lp.decay_offset)
+        ln_A     = np.log(A)   # natural log
+        fund     = lp.A0_nominal * np.cos(lp.omega_0 * ln_A + lp.phi_0)
+        harm2    = lp.A1_nominal * np.cos(lp.omega_1 * ln_A + lp.phi_1)
+        harm4    = lp.A2_nominal * np.cos(lp.omega_2 * ln_A + lp.phi_2)
+        return decay * (fund + harm2 + harm4)
 
     def log_periodic_fundamental_only(self, A: float) -> float:
         """Fundamental mode only (for PL + Fundamental layer)."""

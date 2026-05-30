@@ -88,10 +88,10 @@ def render_powerlaw_tab():
     # ── Calibration warning ──────────────────────────────────────────
     if model.lp.NEEDS_CALIBRATION:
         st.warning(
-            "⚠️ **Log-periodic amplitude/phase parameters are estimated** from "
-            "published charts. Perrenod has not released exact A0/φ0/A1/φ1 values. "
-            "The power law spine (Layer 1) is fully calibrated from the paper. "
-            "Re-calibrate lp_params once exact values are published.",
+            "⚠️ **Partial calibration:** λ = 2.0076, ω₀ = 9.0155, and φ₀ = 4.6407 "
+            "are now derived from 4 published Perrenod peak ages (HIGH CONFIDENCE). "
+            "The harmonic phases φ₁, φ₂ and amplitudes A₀–A₂ remain estimated from "
+            "published charts. Re-calibrate once Perrenod releases exact fit values.",
             icon="⚠️",
         )
 
@@ -333,18 +333,20 @@ def render_powerlaw_tab():
 
         ```
         log₁₀ P(A) = a + k·log₁₀(A)
-                   + [1/(A + 2.0)] × [A₀·cos(ω₀·ln(A) + φ₀)
-                                    + A₁·cos(ω₁·ln(A) + φ₁)]
+                   + [1/(A + 2.0)] × [A₀·cos(ω₀·ln(A)  + φ₀)
+                                    + A₁·cos(2ω₀·ln(A) + φ₁)
+                                    + A₂·cos(4ω₀·ln(A) + φ₂)]
         ```
 
         | Parameter | Value | Source |
         |-----------|-------|--------|
-        | λ (bubble spacing) | 2.07 | Fourier/wavelet analysis |
-        | ω₀ = 2π/ln(λ) | **8.63** | Derived (not free parameter) |
-        | ω₁ ≈ 3.5 × ω₀ | **~30.2** | Slide deck |
+        | λ (bubble spacing) | **2.0076** | Derived from 4 published peak ages ✓ |
+        | ω₀ = 2π/ln(λ) | **9.0155** | Derived from λ ✓ |
+        | Harmonics | 2ω₀, 4ω₀ | Rolling 4-yr window fit (Perrenod slides) |
+        | φ₀ | **4.6407 ± 0.006** | Derived from peak alignment ✓ |
         | Decay form | 1/(A + 2.0) | Perrenod Substack Mar 2026 |
         | Noise decay | 6.1/(A + 27.1) | Perrenod Substack Mar 2026 |
-        | A₀, φ₀, A₁, φ₁ | *estimated* | ⚠️ Needs calibration |
+        | A₀, A₁, A₂, φ₁, φ₂ | *estimated* | ⚠️ Needs calibration |
         """)
 
         # Show LP contribution over time
