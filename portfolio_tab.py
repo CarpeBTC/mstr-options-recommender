@@ -343,11 +343,12 @@ def render_portfolio_tab(
             # Projected BTC price from model
             btc = _blend_btc(qdate, quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn)
 
-            # Growth ratio from actual spot BTC → full model upside
-            btc_ratio = btc / btc_p_today if btc_p_today else 1.0
+            # MSTR: use the same btc_to_mstr_fn as the Recommendations tab so
+            # mNAV slider and BTC yield growth are correctly applied.
+            mstr_proj = btc_to_mstr_fn(btc, qdate, mnav, btc_yield) if btc > 0 else 0.0
 
-            # Projected equity prices = today's market price × growth ratio
-            mstr_proj = mstr_p_today * btc_ratio
+            # ASST: scale proportionally to BTC (no separate ASST btc_to_mstr fn)
+            btc_ratio = btc / btc_p_today if btc_p_today else 1.0
             asst_proj = asst_p_today * btc_ratio
 
             # Equity values
@@ -461,8 +462,8 @@ def render_portfolio_tab(
     breakdown_rows = []
     for qdate in q_dates:
         btc = _blend_btc(qdate, sel_quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn)
+        mstr_proj  = btc_to_mstr_fn(btc, qdate, mnav, btc_yield) if btc > 0 else 0.0
         btc_ratio  = btc / btc_p_today if btc_p_today else 1.0
-        mstr_proj  = mstr_p_today * btc_ratio
         asst_proj  = asst_p_today * btc_ratio
 
         row: dict[str, object] = {"Quarter": _qlabel(qdate)}
@@ -513,7 +514,10 @@ def render_portfolio_tab(
         for qdate in q_dates:
             btc = _blend_btc(qdate, opt_quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn)
             btc_ratio = btc / btc_p_today if btc_p_today else 1.0
-            S  = mstr_p_today * btc_ratio if opt_pos["underlying"] == "MSTR" else asst_p_today * btc_ratio
+            if opt_pos["underlying"] == "MSTR":
+                S = btc_to_mstr_fn(btc, qdate, mnav, btc_yield) if btc > 0 else 0.0
+            else:
+                S = asst_p_today * btc_ratio
             iv = iv_mstr if opt_pos["underlying"] == "MSTR" else iv_asst
             val = _option_value(S, opt_pos["strike"], qdate, opt_pos["expiry"],
                                 opt_pos["contracts"], iv)
