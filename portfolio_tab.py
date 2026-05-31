@@ -206,10 +206,14 @@ def render_portfolio_tab(
     asst_p_today = asst_price_live if asst_price_live else _ref_prices.get("ASST", 17.67)
 
     st.subheader("Portfolio — Strategy & Strive Holdings")
+
+    # Live price status bar
+    _btc_str  = f"${btc_price_live:,.0f}" if btc_price_live else "unavailable"
+    _mstr_str = f"${mstr_p_today:,.2f}" + (" (live)" if mstr_price_live else " (CSV)")
+    _asst_str = f"${asst_p_today:,.2f}" + (" (live)" if asst_price_live else " (CSV)")
     st.caption(
-        f"Positions from Fidelity export {today.strftime('%Y-%m-%d')} · "
-        f"Forecast uses active BTC model blend · "
-        f"Options valued via Black-Scholes"
+        f"Live prices: BTC {_btc_str} · MSTR {_mstr_str} · ASST {_asst_str} · "
+        f"Forecast uses active BTC model blend · Options via Black-Scholes"
     )
 
     # ── Holdings Summary Table ────────────────────────────────────────────────
@@ -217,8 +221,8 @@ def render_portfolio_tab(
     # the current BTC price rather than using the stale CSV reference value.
     def _live_mv(p: dict) -> float:
         """Compute live market value from exact quantities where available."""
-        if "btc_qty" in p and btc_price_live:
-            return p["btc_qty"] * btc_price_live
+        if "btc_qty" in p:
+            return p["btc_qty"] * btc_price_live if btc_price_live else p["ref_mv"]
         if p["ptype"] == "equity" and "shares" in p:
             price = mstr_p_today if p["underlying"] == "MSTR" else asst_p_today
             return p["shares"] * price if price else p["ref_mv"]
