@@ -351,6 +351,20 @@ def render_portfolio_tab(
     _sata_pos   = next(p for p in POSITIONS if p["symbol"] == "SATA")
     _SATA_FLAT  = _sata_pos["shares"] * _sata_pos["quote_price"]   # $5,001
 
+    # ── Pre-compute option expiry values (per symbol × quantile) ─────────────
+    # After an option expires it is assumed converted to cash at the expiry-date
+    # intrinsic value.  All forecast quarters AFTER the expiry date use this
+    # frozen value rather than continuing to project the option value upward.
+    _expiry_vals: dict = {}   # key: (symbol, quantile) → float
+    for quant in _QUANTILES:
+        for c in calls:
+            btc_e = _blend_btc(c["expiry"], quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn)
+            if c["underlying"] == "MSTR":
+                S_e = btc_to_mstr_fn(btc_e, c["expiry"], mnav, btc_yield) if btc_e > 0 else 0.0
+            else:
+                S_e = btc_to_asst_fn(btc_e, c["expiry"], asst_mnav, btc_yield) if btc_e > 0 else 0.0
+            _expiry_vals[(c["symbol"], quant)] = max(S_e - c["strike"], 0.0) * 100 * c["contracts"]
+
     # ── Forecast grid ─────────────────────────────────────────────────────────
     forecast: dict[str, list[float]] = {q: [] for q in _QUANTILES}
 
@@ -382,13 +396,16 @@ def render_portfolio_tab(
             eq_mstr = mstr_shares * mstr_proj
             eq_asst = asst_shares * asst_proj
 
-            # Option values
+            # Option values — frozen at expiry intrinsic value for post-expiry quarters
             opt_total = 0.0
             for c in calls:
-                S  = mstr_proj if c["underlying"] == "MSTR" else asst_proj
-                iv = iv_mstr   if c["underlying"] == "MSTR" else iv_asst
-                opt_total += _option_value(S, c["strike"], qdate, c["expiry"],
-                                           c["contracts"], iv)
+                if qdate >= c["expiry"]:
+                    opt_total += _expiry_vals[(c["symbol"], quant)]
+                else:
+                    S  = mstr_proj if c["underlying"] == "MSTR" else asst_proj
+                    iv = iv_mstr   if c["underlying"] == "MSTR" else iv_asst
+                    opt_total += _option_value(S, c["strike"], qdate, c["expiry"],
+                                               c["contracts"], iv)
 
             # BTC-denominated (ETFs + cold storage)
             btc_total = sum(qty * btc for qty in btc_equiv.values())
@@ -514,10 +531,13 @@ def render_portfolio_tab(
                 val = _SATA_FLAT
             elif p["ptype"] in ("btc_etf", "btc_cold"):
                 val = btc_equiv.get(p["symbol"], 0) * btc
-            else:  # call
-                S  = mstr_proj if p["underlying"] == "MSTR" else asst_proj
-                iv = iv_mstr   if p["underlying"] == "MSTR" else iv_asst
-                val = _option_value(S, p["strike"], qdate, p["expiry"], p["contracts"], iv)
+            else:  # call — frozen at expiry value after expiration
+                if qdate >= p["expiry"]:
+                    val = _expiry_vals[(p["symbol"], sel_quant)]
+                else:
+                    S  = mstr_proj if p["underlying"] == "MSTR" else asst_proj
+                    iv = iv_mstr   if p["underlying"] == "MSTR" else iv_asst
+                    val = _option_value(S, p["strike"], qdate, p["expiry"], p["contracts"], iv)
             row[p["symbol"]] = val
 
         row["TOTAL"] = sum(row[p["symbol"]] for p in POSITIONS)
@@ -557,14 +577,18 @@ def render_portfolio_tab(
         color = option_colors.get(sym, "#aaa")
         opt_pnls = []
         for i, qdate in enumerate(q_dates):
-            btc = _blend_btc(qdate, opt_quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn)
-            if opt_pos["underlying"] == "MSTR":
-                S = btc_to_mstr_fn(btc, qdate, mnav, btc_yield) if btc > 0 else 0.0
+            if qdate >= opt_pos["expiry"]:
+                # Frozen at expiry intrinsic value (cash conversion assumed)
+                val = _expiry_vals[(opt_pos["symbol"], opt_quant)]
             else:
-                S = btc_to_asst_fn(btc, qdate, asst_mnav, btc_yield) if btc > 0 else 0.0
-            iv = iv_mstr if opt_pos["underlying"] == "MSTR" else iv_asst
-            val = _option_value(S, opt_pos["strike"], qdate, opt_pos["expiry"],
-                                opt_pos["contracts"], iv)
+                btc = _blend_btc(qdate, opt_quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn)
+                if opt_pos["underlying"] == "MSTR":
+                    S = btc_to_mstr_fn(btc, qdate, mnav, btc_yield) if btc > 0 else 0.0
+                else:
+                    S = btc_to_asst_fn(btc, qdate, asst_mnav, btc_yield) if btc > 0 else 0.0
+                iv = iv_mstr if opt_pos["underlying"] == "MSTR" else iv_asst
+                val = _option_value(S, opt_pos["strike"], qdate, opt_pos["expiry"],
+                                    opt_pos["contracts"], iv)
             pnl = val - opt_pos["cost_basis"]
             opt_pnls.append(pnl)
             total_pnls[i] += pnl
