@@ -281,15 +281,17 @@ def render_portfolio_tab(
     with col_iv1:
         iv_mstr = st.slider(
             "MSTR Option IV (for BS pricing)",
-            min_value=0.5, max_value=3.0, value=1.4, step=0.05,
-            help="Implied volatility used in Black-Scholes for MSTR call forecasting. "
-                 "Historical MSTR IV is typically 100–180%.",
+            min_value=0.3, max_value=2.5, value=0.80, step=0.05,
+            help="Implied volatility for Black-Scholes MSTR call forecasting. "
+                 "Current market-implied IV for Dec'27 MSTR options is ~75–100% "
+                 "(varies by strike — lower for deeper OTM calls).",
         )
     with col_iv2:
         iv_asst = st.slider(
             "ASST Option IV (for BS pricing)",
-            min_value=0.5, max_value=3.0, value=1.8, step=0.05,
-            help="Implied volatility used in Black-Scholes for ASST call forecasting.",
+            min_value=0.3, max_value=2.5, value=1.00, step=0.05,
+            help="Implied volatility for Black-Scholes ASST call forecasting. "
+                 "Current market-implied IV for Jan'28 ASST C25 is ~100%.",
         )
 
     # ── Build forecast grid: dates × quantiles ────────────────────────────────
@@ -319,25 +321,41 @@ def render_portfolio_tab(
     # Calls list for easy iteration
     calls = [p for p in POSITIONS if p["ptype"] == "call"]
 
+    # ── BTC model baseline at today (per-quantile, for relative projection) ─────
+    # Project equity/option prices using the model's growth ratio rather than
+    # absolute prices.  For each quantile, we compute:
+    #
+    #   ratio(quarter, q) = btc_model(quarter, q) / btc_model(today, q)
+    #   mstr_proj = mstr_p_today × ratio
+    #
+    # Using today's model value as denominator (not btc_live) means that all
+    # quantile scenarios start at today's market price and diverge only via the
+    # model's projected future growth — giving realistic near-term values
+    # regardless of whether spot BTC is above or below the model's fair value.
+    _btc_today: dict[str, float] = {
+        q: (_blend_btc(today, q, use_jacobian, use_bhm, use_cowen, bhm_price_fn) or 1.0)
+        for q in _QUANTILES
+    }
+
     forecast: dict[str, list[float]] = {q: [] for q in _QUANTILES}
 
     for qdate in q_dates:
         for quant in _QUANTILES:
-            # Projected BTC price
+            # Projected BTC price from model
             btc = _blend_btc(qdate, quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn)
 
-            # Projected MSTR price (use btc_to_mstr_fn with slider mNAV)
-            mstr_proj = btc_to_mstr_fn(btc, qdate, mnav, btc_yield) if btc > 0 else 0.0
+            # Growth ratio vs today's model value for the SAME quantile
+            btc_ratio = btc / _btc_today[quant] if _btc_today[quant] else 1.0
 
-            # ASST projected proportionally to MSTR (both BTC treasury companies)
-            asst_scale  = asst_p_today / mstr_p_today if mstr_p_today else 1.0
-            asst_proj   = mstr_proj * asst_scale
+            # Projected equity prices = today's price × growth ratio
+            mstr_proj = mstr_p_today * btc_ratio
+            asst_proj = asst_p_today * btc_ratio
 
             # Equity values
             eq_mstr = mstr_shares * mstr_proj
             eq_asst = asst_shares * asst_proj
 
-            # Option values
+            # Option values (Black-Scholes uses projected underlying price)
             opt_total = 0.0
             for c in calls:
                 if c["underlying"] == "MSTR":
@@ -437,9 +455,9 @@ def render_portfolio_tab(
     breakdown_rows = []
     for qdate in q_dates:
         btc = _blend_btc(qdate, sel_quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn)
-        mstr_proj = btc_to_mstr_fn(btc, qdate, mnav, btc_yield) if btc > 0 else 0.0
-        asst_scale = asst_p_today / mstr_p_today if mstr_p_today else 1.0
-        asst_proj  = mstr_proj * asst_scale
+        btc_ratio  = btc / _btc_today[sel_quant] if _btc_today[sel_quant] else 1.0
+        mstr_proj  = mstr_p_today * btc_ratio
+        asst_proj  = asst_p_today * btc_ratio
 
         row: dict[str, object] = {"Quarter": _qlabel(qdate)}
         for p in POSITIONS:
@@ -489,10 +507,9 @@ def render_portfolio_tab(
             opt_pnls = []
             for qdate in q_dates:
                 btc = _blend_btc(qdate, quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn)
-                mstr_proj = btc_to_mstr_fn(btc, qdate, mnav, btc_yield) if btc > 0 else 0.0
-                asst_scale = asst_p_today / mstr_p_today if mstr_p_today else 1.0
-                S  = mstr_proj if opt_pos["underlying"] == "MSTR" else mstr_proj * asst_scale
-                iv = iv_mstr   if opt_pos["underlying"] == "MSTR" else iv_asst
+                btc_ratio = btc / _btc_today[quant] if _btc_today[quant] else 1.0
+                S  = mstr_p_today * btc_ratio if opt_pos["underlying"] == "MSTR" else asst_p_today * btc_ratio
+                iv = iv_mstr if opt_pos["underlying"] == "MSTR" else iv_asst
                 val = _option_value(S, opt_pos["strike"], qdate, opt_pos["expiry"],
                                     opt_pos["contracts"], iv)
                 opt_pnls.append(val - opt_pos["cost_basis"])
