@@ -119,7 +119,7 @@ use_cowen    = st.sidebar.checkbox(
 )
 use_perrenod = st.sidebar.checkbox(
     "Perrenod (2026)",
-    value=False,
+    value=True,
     help="PL + Fundamental + Harmonic model. Sigma bands from fitted RMS (0.077 dex). "
          "Symmetric normal-distribution scenario probabilities. "
          "Highlights surge behaviour the plain power law misses.",
@@ -1108,6 +1108,7 @@ with tab6:
         use_jacobian=use_jacobian,
         use_bhm=use_bhm,
         use_cowen=use_cowen,
+        use_perrenod=use_perrenod,
         mnav=mnav,
         asst_mnav=asst_mnav,
         btc_yield=btc_yield,

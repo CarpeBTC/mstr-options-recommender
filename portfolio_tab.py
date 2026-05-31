@@ -157,8 +157,10 @@ def _blend_btc(
     use_b: bool,
     use_c: bool,
     bhm_fn: Callable,
+    use_p: bool = False,
 ) -> float:
     """Average BTC price at *target* across checked models for *quantile*."""
+    from models import perrenod as _perrenod
     vals = []
     if use_j:
         vals.append(jacobian.get_btc_price(target).get(quantile, 0.0))
@@ -166,6 +168,8 @@ def _blend_btc(
         vals.append(bhm_fn(target).get(quantile, 0.0))
     if use_c:
         vals.append(cowen.get_btc_price(target).get(quantile, 0.0))
+    if use_p:
+        vals.append(_perrenod.get_btc_price(target).get(quantile, 0.0))
     return float(np.mean(vals)) if vals else 0.0
 
 
@@ -195,6 +199,7 @@ def render_portfolio_tab(
     use_jacobian: bool,
     use_bhm: bool,
     use_cowen: bool,
+    use_perrenod: bool,
     mnav: float,
     asst_mnav: float,
     btc_yield: float,
@@ -358,7 +363,7 @@ def render_portfolio_tab(
     _expiry_vals: dict = {}   # key: (symbol, quantile) → float
     for quant in _QUANTILES:
         for c in calls:
-            btc_e = _blend_btc(c["expiry"], quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn)
+            btc_e = _blend_btc(c["expiry"], quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn, use_p=use_perrenod)
             if c["underlying"] == "MSTR":
                 S_e = btc_to_mstr_fn(btc_e, c["expiry"], mnav, btc_yield) if btc_e > 0 else 0.0
             else:
@@ -377,7 +382,7 @@ def render_portfolio_tab(
 
         for quant in _QUANTILES:
             # Projected BTC and MSTR
-            btc = _blend_btc(qdate, quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn)
+            btc = _blend_btc(qdate, quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn, use_p=use_perrenod)
             mstr_proj = btc_to_mstr_fn(btc, qdate, mnav, btc_yield) if btc > 0 else 0.0
 
             # ASST: scale proportionally to BTC
@@ -504,7 +509,7 @@ def render_portfolio_tab(
 
     breakdown_rows = []
     for qdate in q_dates:
-        btc = _blend_btc(qdate, sel_quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn)
+        btc = _blend_btc(qdate, sel_quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn, use_p=use_perrenod)
         mstr_proj  = btc_to_mstr_fn(btc, qdate, mnav, btc_yield) if btc > 0 else 0.0
         asst_proj  = btc_to_asst_fn(btc, qdate, asst_mnav, btc_yield) if btc > 0 else 0.0
 
@@ -581,7 +586,7 @@ def render_portfolio_tab(
                 # Frozen at expiry intrinsic value (cash conversion assumed)
                 val = _expiry_vals[(opt_pos["symbol"], opt_quant)]
             else:
-                btc = _blend_btc(qdate, opt_quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn)
+                btc = _blend_btc(qdate, opt_quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn, use_p=use_perrenod)
                 if opt_pos["underlying"] == "MSTR":
                     S = btc_to_mstr_fn(btc, qdate, mnav, btc_yield) if btc > 0 else 0.0
                 else:
