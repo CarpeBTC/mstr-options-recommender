@@ -541,13 +541,17 @@ def render_portfolio_tab(
     }
 
     opt_fig = go.Figure()
+
+    # Accumulate per-quarter P&L totals across all options
+    total_today_pnl = 0.0
+    total_pnls = [0.0] * len(q_dates)
+
     for opt_pos in calls:
         sym = opt_pos["symbol"]
         color = option_colors.get(sym, "#aaa")
         opt_pnls = []
-        for qdate in q_dates:
+        for i, qdate in enumerate(q_dates):
             btc = _blend_btc(qdate, opt_quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn)
-            asst_proj = btc_to_asst_fn(btc, qdate, asst_mnav, btc_yield) if btc > 0 else 0.0
             if opt_pos["underlying"] == "MSTR":
                 S = btc_to_mstr_fn(btc, qdate, mnav, btc_yield) if btc > 0 else 0.0
             else:
@@ -555,12 +559,15 @@ def render_portfolio_tab(
             iv = iv_mstr if opt_pos["underlying"] == "MSTR" else iv_asst
             val = _option_value(S, opt_pos["strike"], qdate, opt_pos["expiry"],
                                 opt_pos["contracts"], iv)
-            opt_pnls.append(val - opt_pos["cost_basis"])
+            pnl = val - opt_pos["cost_basis"]
+            opt_pnls.append(pnl)
+            total_pnls[i] += pnl
 
-        # Prepend Today (cost = 0 P&L relative to ref_mv, already showing gain/loss)
         today_opt_pnl = opt_pos["ref_mv"] - opt_pos["cost_basis"]
+        total_today_pnl += today_opt_pnl
+
         opt_fig.add_trace(go.Scatter(
-            x=["Today"] + all_labels[1:],   # reuse all_labels (Today + quarters)
+            x=["Today"] + all_labels[1:],
             y=[today_opt_pnl] + opt_pnls,
             name=opt_pos["name"],
             mode="lines+markers",
@@ -572,6 +579,21 @@ def render_portfolio_tab(
                 "P&L vs cost: <b>$%{y:,.0f}</b><extra></extra>"
             ),
         ))
+
+    # Total line — all options combined
+    opt_fig.add_trace(go.Scatter(
+        x=["Today"] + all_labels[1:],
+        y=[total_today_pnl] + total_pnls,
+        name="── Total ──",
+        mode="lines+markers",
+        line=dict(color="white", width=3, dash="dash"),
+        marker=dict(size=9, symbol="diamond"),
+        hovertemplate=(
+            "<b>Total Options P&L</b><br>"
+            "%{x}<br>"
+            "P&L vs cost: <b>$%{y:,.0f}</b><extra></extra>"
+        ),
+    ))
 
     opt_fig.add_hline(y=0, line_dash="dot", line_color="rgba(255,255,255,0.45)",
                       annotation_text="Break-even", annotation_position="top left",
