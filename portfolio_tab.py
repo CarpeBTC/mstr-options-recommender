@@ -213,6 +213,9 @@ def render_portfolio_tab(
     mstr_p_today  = mstr_price_live  if mstr_price_live  else _ref_price("MSTR", MSTR_REF_PRICE)
     asst_p_today  = asst_price_live  if asst_price_live  else _ref_price("ASST", ASST_REF_PRICE)
     btc_p_today   = btc_price_live   if btc_price_live   else BTC_REF_PRICE
+    # STRK live price must be defined here — used by both caption and _live_mv closure
+    _strk_price_today = (strk_price_live if strk_price_live and strk_price_live > 0
+                         else _ref_price("STRK", 70.27))
 
     st.subheader("Portfolio — Strategy & Strive Holdings")
 
@@ -227,11 +230,6 @@ def render_portfolio_tab(
     )
 
     # ── Holdings Summary Table ────────────────────────────────────────────────
-    # For BTC cold-storage positions with an exact btc_qty, compute live MV from
-    # the current BTC price rather than using the stale CSV reference value.
-    # Live STRK price: use fetched price if available, else CSV fallback
-    _strk_price_today = (strk_price_live if strk_price_live and strk_price_live > 0
-                         else next(p["quote_price"] for p in POSITIONS if p["symbol"] == "STRK"))
 
     def _live_mv(p: dict) -> float:
         """Compute live market value from exact quantities where available."""
