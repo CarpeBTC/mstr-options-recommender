@@ -215,8 +215,8 @@ def render_portfolio_tab(
 
     # Live price status bar
     _btc_str  = f"${btc_price_live:,.0f}" if btc_price_live else "unavailable"
-    _mstr_str = f"${mstr_p_today:,.2f}" + (" (live)" if mstr_price_live else " (CSV)")
-    _asst_str = f"${asst_p_today:,.2f}" + (" (live)" if asst_price_live else " (CSV)")
+    _mstr_str = f"${mstr_p_today:,.0f}" + (" (live)" if mstr_price_live else " (CSV)")
+    _asst_str = f"${asst_p_today:,.0f}" + (" (live)" if asst_price_live else " (CSV)")
     st.caption(
         f"Live prices: BTC {_btc_str} · MSTR {_mstr_str} · ASST {_asst_str} · "
         f"Forecast uses active BTC model blend · Options via Black-Scholes"
@@ -276,10 +276,10 @@ def render_portfolio_tab(
         holdings_df.set_index("Position"),
         use_container_width=True,
         column_config={
-            "Cost Basis":   st.column_config.NumberColumn("Cost Basis",   format="$%.2f"),
-            "Market Value": st.column_config.NumberColumn("Market Value", format="$%.2f"),
-            "Gain / Loss":  st.column_config.NumberColumn("Gain / Loss",  format="$%.2f"),
-            "G/L %":        st.column_config.NumberColumn("G/L %",        format="%.2f%%"),
+            "Cost Basis":   st.column_config.NumberColumn("Cost Basis",   format="$%,d"),
+            "Market Value": st.column_config.NumberColumn("Market Value", format="$%,d"),
+            "Gain / Loss":  st.column_config.NumberColumn("Gain / Loss",  format="$%,d"),
+            "G/L %":        st.column_config.NumberColumn("G/L %",        format="%.1f%%"),
         },
     )
 
@@ -493,7 +493,7 @@ def render_portfolio_tab(
 
     bdf = pd.DataFrame(breakdown_rows).set_index("Quarter")
     col_cfg = {
-        col: st.column_config.NumberColumn(col, format="$%.0f")
+        col: st.column_config.NumberColumn(col, format="$%,d")
         for col in bdf.columns
     }
     st.dataframe(bdf, use_container_width=True, column_config=col_cfg)
