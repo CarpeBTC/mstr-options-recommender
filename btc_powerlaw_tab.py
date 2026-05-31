@@ -176,6 +176,23 @@ def render_powerlaw_tab():
             name="±1σ band",
         ))
 
+        # Individual σ lines with hover prices
+        _sigma_lines = [
+            ("price_p2s", "+2σ", "rgba(255,100,100,0.85)",  "dash"),
+            ("price_p1s", "+1σ", "rgba(255,200,80,0.85)",   "dot"),
+            ("price_m1s", "−1σ", "rgba(100,200,255,0.85)",  "dot"),
+            ("price_m2s", "−2σ", "rgba(80,140,255,0.85)",   "dash"),
+        ]
+        for col, label, color, dash in _sigma_lines:
+            fig.add_trace(go.Scatter(
+                x=df_full.index,
+                y=df_full[col],
+                mode="lines",
+                line=dict(color=color, width=1.2, dash=dash),
+                name=label,
+                hovertemplate=f"<b>{label}</b>: $%{{y:,.0f}}<extra></extra>",
+            ))
+
     # Power law baseline (dotted)
     fig.add_trace(go.Scatter(
         x=df_pl.index, y=df_pl["price_median"],
