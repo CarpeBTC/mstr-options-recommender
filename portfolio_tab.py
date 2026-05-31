@@ -671,8 +671,8 @@ def render_portfolio_tab(
         help="Portfolio value is computed for this date under every Q × mNAV combination.",
     )
 
-    # mNAV columns: 0.6 to 4.0 in 0.2 steps
-    _mnav_range = [round(0.6 + i * 0.2, 1) for i in range(18)]
+    # mNAV columns: 0.6 to 3.0 in 0.2 steps (13 columns)
+    _mnav_range = [round(0.6 + i * 0.2, 1) for i in range(13)]
 
     # Row scenario order: best on top, bear on bottom
     _H_QUANTS  = ["q=0.99", "q=0.75", "OLS", "q=0.25", "q=0.01"]
@@ -764,7 +764,7 @@ def render_portfolio_tab(
 
     _h_col_labels = [_H_LABELS[q] for q in _H_QUANTS]
     _h_data_cols  = [
-        [f"${_h_matrix[q][i]:,.0f}" for q in _H_QUANTS]
+        [f"${_h_matrix[q][i]/1_000_000:.3f}M" for q in _H_QUANTS]
         for i in range(len(_mnav_range))
     ]
     _h_all_values = [_h_col_labels] + _h_data_cols
