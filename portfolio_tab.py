@@ -316,63 +316,78 @@ def render_portfolio_tab(
         else:
             btc_equiv[p["symbol"]] = 0.0
 
-    # Stable preferred MV (fixed income, held at today's value throughout)
-    preferred_mv = sum(p["ref_mv"] for p in POSITIONS if p["ptype"] == "preferred")
-
     # Calls list for easy iteration
     calls = [p for p in POSITIONS if p["ptype"] == "call"]
 
-    # ── BTC growth ratio: anchored to actual spot BTC price ──────────────────
-    # Project using btc_p_today (actual market price, not the model's current
-    # fair value) as the denominator.  This shows the FULL model upside:
-    #
-    #   ratio(quarter, q) = btc_model(quarter, q) / btc_p_today
-    #   mstr_proj = mstr_p_today × ratio
-    #
-    # Example: BTC spot = $73K, Jacobian OLS Dec 2027 = $213K → ratio 2.91×
-    #   → MSTR = $159 × 2.91 = $463; C250/C350/C400 all ITM at expiry.
-    #
-    # Note: the near-term (Q2 2026) will show a significant jump because the
-    # model prices BTC at ~$140K "fair value" today while spot is at $73K.
-    # A "Today" marker is added to the chart for grounding.
+    # ── Preferred stock constants ─────────────────────────────────────────────
+    # STRF: fixed 10% pfd, $2.50/share/qtr dividend reinvested at $98.50 par
+    _strf_pos    = next(p for p in POSITIONS if p["symbol"] == "STRF")
+    _STRF_PRICE  = _strf_pos["quote_price"]   # $98.50 (assumed stable)
+    _STRF_DIV_Q  = 2.50                        # per share per quarter
+    _strf_shares = float(_strf_pos["shares"])  # 300 — running count
 
+    # STRK: perpetual pfd with 10:1 MSTR conversion option
+    #   STRK price  = bond_floor + 0.10 × MSTR_price
+    #   bond_floor  = STRK_today − 0.10 × MSTR_today  (derived from CSV prices)
+    _strk_pos    = next(p for p in POSITIONS if p["symbol"] == "STRK")
+    _STRK_BOND   = _strk_pos["quote_price"] - 0.10 * mstr_p_today   # ≈ $54.36
+    _STRK_CONV   = 0.10                        # MSTR shares per STRK share
+    _STRK_DIV_Q  = 2.00                        # per share per quarter
+    _strk_shares = {q: float(_strk_pos["shares"]) for q in _QUANTILES}  # 930, per scenario
+
+    # STRC: variable 11% pfd, dividends NOT reinvested — held flat
+    _strc_pos   = next(p for p in POSITIONS if p["symbol"] == "STRC")
+    _STRC_FLAT  = _strc_pos["shares"] * _strc_pos["quote_price"]   # $49,495
+
+    # SATA: variable 12.25% pfd, held flat
+    _sata_pos   = next(p for p in POSITIONS if p["symbol"] == "SATA")
+    _SATA_FLAT  = _sata_pos["shares"] * _sata_pos["quote_price"]   # $5,001
+
+    # ── Forecast grid ─────────────────────────────────────────────────────────
     forecast: dict[str, list[float]] = {q: [] for q in _QUANTILES}
 
     for qdate in q_dates:
-        for quant in _QUANTILES:
-            # Projected BTC price from model
-            btc = _blend_btc(qdate, quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn)
+        # STRF: reinvest quarterly dividend at constant $98.50 price.
+        # Same for all quantile scenarios (price doesn't depend on BTC model).
+        _strf_div     = _strf_shares * _STRF_DIV_Q
+        _strf_shares += _strf_div / _STRF_PRICE
+        _strf_value   = _strf_shares * _STRF_PRICE
 
-            # MSTR: use the same btc_to_mstr_fn as the Recommendations tab so
-            # mNAV slider and BTC yield growth are correctly applied.
+        for quant in _QUANTILES:
+            # Projected BTC and MSTR
+            btc = _blend_btc(qdate, quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn)
             mstr_proj = btc_to_mstr_fn(btc, qdate, mnav, btc_yield) if btc > 0 else 0.0
 
-            # ASST: scale proportionally to BTC (no separate ASST btc_to_mstr fn)
+            # ASST: scale proportionally to BTC
             btc_ratio = btc / btc_p_today if btc_p_today else 1.0
             asst_proj = asst_p_today * btc_ratio
+
+            # STRK: price = bond floor + MSTR conversion option value.
+            # Reinvest quarterly dividend at this quarter's STRK price.
+            _strk_price   = _STRK_BOND + _STRK_CONV * mstr_proj
+            _strk_div     = _strk_shares[quant] * _STRK_DIV_Q
+            _strk_shares[quant] += _strk_div / _strk_price if _strk_price > 0 else 0.0
+            _strk_value   = _strk_shares[quant] * _strk_price
+
+            pref_total = _strf_value + _strk_value + _STRC_FLAT + _SATA_FLAT
 
             # Equity values
             eq_mstr = mstr_shares * mstr_proj
             eq_asst = asst_shares * asst_proj
 
-            # Option values (Black-Scholes uses projected underlying price)
+            # Option values
             opt_total = 0.0
             for c in calls:
-                if c["underlying"] == "MSTR":
-                    S  = mstr_proj
-                    iv = iv_mstr
-                else:
-                    S  = asst_proj
-                    iv = iv_asst
-                opt_total += _option_value(
-                    S, c["strike"], qdate, c["expiry"], c["contracts"], iv
-                )
+                S  = mstr_proj if c["underlying"] == "MSTR" else asst_proj
+                iv = iv_mstr   if c["underlying"] == "MSTR" else iv_asst
+                opt_total += _option_value(S, c["strike"], qdate, c["expiry"],
+                                           c["contracts"], iv)
 
-            # BTC-denominated positions (ETFs + cold storage): qty × projected BTC price
+            # BTC-denominated (ETFs + cold storage)
             btc_total = sum(qty * btc for qty in btc_equiv.values())
 
             forecast[quant].append(
-                eq_mstr + eq_asst + opt_total + preferred_mv + btc_total
+                eq_mstr + eq_asst + opt_total + pref_total + btc_total
             )
 
     # ── Total portfolio forecast chart ────────────────────────────────────────
@@ -459,6 +474,10 @@ def render_portfolio_tab(
         format_func=lambda q: _Q_LABELS[q],
     )
 
+    # Re-run STRF/STRK reinvestment from scratch for the selected scenario
+    _bd_strf_shares = float(_strf_pos["shares"])
+    _bd_strk_shares = float(_strk_pos["shares"])
+
     breakdown_rows = []
     for qdate in q_dates:
         btc = _blend_btc(qdate, sel_quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn)
@@ -466,12 +485,27 @@ def render_portfolio_tab(
         btc_ratio  = btc / btc_p_today if btc_p_today else 1.0
         asst_proj  = asst_p_today * btc_ratio
 
+        # STRF reinvestment
+        _bd_strf_shares += (_bd_strf_shares * _STRF_DIV_Q) / _STRF_PRICE
+        _bd_strf_val = _bd_strf_shares * _STRF_PRICE
+
+        # STRK reinvestment
+        _bd_strk_price = _STRK_BOND + _STRK_CONV * mstr_proj
+        _bd_strk_shares += (_bd_strk_shares * _STRK_DIV_Q) / _bd_strk_price if _bd_strk_price > 0 else 0.0
+        _bd_strk_val = _bd_strk_shares * _bd_strk_price
+
         row: dict[str, object] = {"Quarter": _qlabel(qdate)}
         for p in POSITIONS:
             if p["ptype"] == "equity":
                 val = mstr_shares * mstr_proj if p["underlying"] == "MSTR" else asst_shares * asst_proj
-            elif p["ptype"] == "preferred":
-                val = p["ref_mv"]
+            elif p["symbol"] == "STRF":
+                val = _bd_strf_val
+            elif p["symbol"] == "STRK":
+                val = _bd_strk_val
+            elif p["symbol"] == "STRC":
+                val = _STRC_FLAT
+            elif p["ptype"] == "preferred":   # SATA
+                val = _SATA_FLAT
             elif p["ptype"] in ("btc_etf", "btc_cold"):
                 val = btc_equiv.get(p["symbol"], 0) * btc
             else:  # call
