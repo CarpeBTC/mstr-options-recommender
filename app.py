@@ -7,7 +7,7 @@ import plotly.express as px
 from datetime import date, datetime, timedelta
 
 from functools import partial
-from data.fetch import get_equity_data, get_option_chain, get_last_updated, get_btc_price_live, get_strategy_holdings, get_asst_holdings, get_block_height_live
+from data.fetch import get_equity_data, get_option_chain, get_last_updated, get_btc_price_live, get_strategy_holdings, get_asst_holdings, get_block_height_live, get_preferred_price
 from models import jacobian, block_height, cowen
 from models.mstr import apply_mnav, btc_to_mstr
 from analytics.kelly import build_portfolio_metrics
@@ -137,6 +137,8 @@ with st.spinner(f"Fetching {_equity_name} data..."):
             _other_equity_price = None
         mstr_price_live = equity_price if equity == "MSTR" else _other_equity_price
         asst_price_live  = equity_price if equity == "ASST"  else _other_equity_price
+        # Fetch STRK live price for Portfolio tab bond-floor calculation
+        strk_price_live = get_preferred_price("STRK")
         st.session_state.fetch_retry_count = 0  # reset on success
     except Exception as e:
         msg = str(e).lower()
@@ -1058,6 +1060,7 @@ with tab6:
         mstr_price_live=mstr_price_live,
         asst_price_live=asst_price_live,
         btc_price_live=btc_live or 0.0,
+        strk_price_live=strk_price_live,
         use_jacobian=use_jacobian,
         use_bhm=use_bhm,
         use_cowen=use_cowen,

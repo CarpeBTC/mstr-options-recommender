@@ -71,6 +71,24 @@ def get_btc_price_live() -> Optional[float]:
         return None
 
 
+@st.cache_data(ttl=480)   # 8 min — preferred stocks trade less actively
+def get_preferred_price(ticker: str) -> Optional[float]:
+    """Fetch last traded price for a preferred stock (e.g. STRK, STRF, STRC).
+    Uses fast_info.last_price; falls back to regularMarketPreviousClose.
+    Returns None on failure so callers can use hardcoded CSV fallbacks."""
+    try:
+        def _fetch():
+            t    = yf.Ticker(ticker)
+            fi   = t.fast_info
+            price = getattr(fi, "last_price", None) or getattr(fi, "regular_market_previous_close", None)
+            if price and float(price) > 0:
+                return float(price)
+            raise ValueError(f"No valid price for {ticker}")
+        return _with_retry(_fetch, retries=2, base_delay=3.0)
+    except Exception:
+        return None
+
+
 @st.cache_data(ttl=3600)  # refresh hourly — strategy.com updates daily
 def get_strategy_holdings() -> Optional[dict]:
     """Fetch latest BTC holdings and assumed diluted shares from strategy.com/shares.

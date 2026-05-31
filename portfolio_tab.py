@@ -191,6 +191,7 @@ def render_portfolio_tab(
     mstr_price_live: float,
     asst_price_live: float,
     btc_price_live: float,
+    strk_price_live: Optional[float],
     use_jacobian: bool,
     use_bhm: bool,
     use_cowen: bool,
@@ -219,14 +220,19 @@ def render_portfolio_tab(
     _btc_str  = f"${btc_price_live:,.0f}" if btc_price_live else "unavailable"
     _mstr_str = f"${mstr_p_today:,.0f}" + (" (live)" if mstr_price_live else " (CSV)")
     _asst_str = f"${asst_p_today:,.0f}" + (" (live)" if asst_price_live else " (CSV)")
+    _strk_str = f"${_strk_price_today:,.2f}" + (" (live)" if strk_price_live and strk_price_live > 0 else " (CSV)")
     st.caption(
         f"Live prices: BTC {_btc_str} · MSTR {_mstr_str} · ASST {_asst_str} · "
-        f"Forecast uses active BTC model blend · Options via Black-Scholes"
+        f"STRK {_strk_str} · Forecast uses active BTC model blend · Options via Black-Scholes"
     )
 
     # ── Holdings Summary Table ────────────────────────────────────────────────
     # For BTC cold-storage positions with an exact btc_qty, compute live MV from
     # the current BTC price rather than using the stale CSV reference value.
+    # Live STRK price: use fetched price if available, else CSV fallback
+    _strk_price_today = (strk_price_live if strk_price_live and strk_price_live > 0
+                         else next(p["quote_price"] for p in POSITIONS if p["symbol"] == "STRK"))
+
     def _live_mv(p: dict) -> float:
         """Compute live market value from exact quantities where available."""
         if "btc_qty" in p:
@@ -234,6 +240,8 @@ def render_portfolio_tab(
         if p["ptype"] == "equity" and "shares" in p:
             price = mstr_p_today if p["underlying"] == "MSTR" else asst_p_today
             return p["shares"] * price if price else p["ref_mv"]
+        if p["symbol"] == "STRK":
+            return p["shares"] * _strk_price_today
         return p["ref_mv"]
 
     rows = []
@@ -330,9 +338,9 @@ def render_portfolio_tab(
 
     # STRK: perpetual pfd with 10:1 MSTR conversion option
     #   STRK price  = bond_floor + 0.10 × MSTR_price
-    #   bond_floor  = STRK_today − 0.10 × MSTR_today  (derived from CSV prices)
+    #   bond_floor  = STRK_today − 0.10 × MSTR_today  (live price preferred over CSV)
     _strk_pos    = next(p for p in POSITIONS if p["symbol"] == "STRK")
-    _STRK_BOND   = _strk_pos["quote_price"] - 0.10 * mstr_p_today   # ≈ $54.36
+    _STRK_BOND   = _strk_price_today - 0.10 * mstr_p_today   # derived from live STRK price
     _STRK_CONV   = 0.10                        # MSTR shares per STRK share
     _STRK_DIV_Q  = 2.00                        # per share per quarter
     _strk_shares = {q: float(_strk_pos["shares"]) for q in _QUANTILES}  # 930, per scenario
