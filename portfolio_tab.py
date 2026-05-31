@@ -253,10 +253,10 @@ def render_portfolio_tab(
             "Position":     p["name"] + extra,
             "Category":     p["category"],
             "Type":         p["ptype"].capitalize(),
-            "Cost Basis":   round(p["cost_basis"]),
-            "Market Value": round(mv),
-            "Gain / Loss":  round(gl),
-            "G/L %":        pct,
+            "Cost Basis":   f"${round(p['cost_basis']):,}",
+            "Market Value": f"${round(mv):,}",
+            "Gain / Loss":  f"${round(gl):,}",
+            "G/L %":        f"{pct:.1f}%",
         })
         running_cost += p["cost_basis"]
         running_mv   += mv
@@ -265,23 +265,14 @@ def render_portfolio_tab(
         "Position": "── TOTAL ──",
         "Category": "",
         "Type": "",
-        "Cost Basis": round(running_cost),
-        "Market Value": round(running_mv),
-        "Gain / Loss": round(running_mv - running_cost),
-        "G/L %": (running_mv - running_cost) / running_cost * 100,
+        "Cost Basis": f"${round(running_cost):,}",
+        "Market Value": f"${round(running_mv):,}",
+        "Gain / Loss": f"${round(running_mv - running_cost):,}",
+        "G/L %": f"{(running_mv - running_cost) / running_cost * 100:.1f}%",
     })
 
     holdings_df = pd.DataFrame(rows)
-    st.dataframe(
-        holdings_df.set_index("Position"),
-        use_container_width=True,
-        column_config={
-            "Cost Basis":   st.column_config.NumberColumn("Cost Basis",   format="$%,.0f"),
-            "Market Value": st.column_config.NumberColumn("Market Value", format="$%,.0f"),
-            "Gain / Loss":  st.column_config.NumberColumn("Gain / Loss",  format="$%,.0f"),
-            "G/L %":        st.column_config.NumberColumn("G/L %",        format="%.1f%%"),
-        },
-    )
+    st.dataframe(holdings_df.set_index("Position"), use_container_width=True)
 
     st.markdown("---")
     st.subheader("Quarterly Return Forecast")
@@ -491,12 +482,9 @@ def render_portfolio_tab(
         row["TOTAL"] = sum(row[p["symbol"]] for p in POSITIONS)
         breakdown_rows.append(row)
 
-    bdf = pd.DataFrame(breakdown_rows).set_index("Quarter").round(0).astype(int)
-    col_cfg = {
-        col: st.column_config.NumberColumn(col, format="$%,.0f")
-        for col in bdf.columns
-    }
-    st.dataframe(bdf, use_container_width=True, column_config=col_cfg)
+    bdf = pd.DataFrame(breakdown_rows).set_index("Quarter")
+    bdf = bdf.applymap(lambda x: f"${round(x):,}" if isinstance(x, float) else x)
+    st.dataframe(bdf, use_container_width=True)
 
     # ── Option-specific forecast (P&L vs cost basis) ──────────────────────────
     st.markdown("---")
