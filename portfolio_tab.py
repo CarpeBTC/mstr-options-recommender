@@ -331,21 +331,19 @@ def render_portfolio_tab(
     # Calls list for easy iteration
     calls = [p for p in POSITIONS if p["ptype"] == "call"]
 
-    # ── BTC model baseline at today (per-quantile, for relative projection) ─────
-    # Project equity/option prices using the model's growth ratio rather than
-    # absolute prices.  For each quantile, we compute:
+    # ── BTC growth ratio: anchored to actual spot BTC price ──────────────────
+    # Project using btc_p_today (actual market price, not the model's current
+    # fair value) as the denominator.  This shows the FULL model upside:
     #
-    #   ratio(quarter, q) = btc_model(quarter, q) / btc_model(today, q)
+    #   ratio(quarter, q) = btc_model(quarter, q) / btc_p_today
     #   mstr_proj = mstr_p_today × ratio
     #
-    # Using today's model value as denominator (not btc_live) means that all
-    # quantile scenarios start at today's market price and diverge only via the
-    # model's projected future growth — giving realistic near-term values
-    # regardless of whether spot BTC is above or below the model's fair value.
-    _btc_today: dict[str, float] = {
-        q: (_blend_btc(today, q, use_jacobian, use_bhm, use_cowen, bhm_price_fn) or 1.0)
-        for q in _QUANTILES
-    }
+    # Example: BTC spot = $73K, Jacobian OLS Dec 2027 = $213K → ratio 2.91×
+    #   → MSTR = $159 × 2.91 = $463; C250/C350/C400 all ITM at expiry.
+    #
+    # Note: the near-term (Q2 2026) will show a significant jump because the
+    # model prices BTC at ~$140K "fair value" today while spot is at $73K.
+    # A "Today" marker is added to the chart for grounding.
 
     forecast: dict[str, list[float]] = {q: [] for q in _QUANTILES}
 
@@ -354,10 +352,10 @@ def render_portfolio_tab(
             # Projected BTC price from model
             btc = _blend_btc(qdate, quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn)
 
-            # Growth ratio vs today's model value for the SAME quantile
-            btc_ratio = btc / _btc_today[quant] if _btc_today[quant] else 1.0
+            # Growth ratio from actual spot BTC → full model upside
+            btc_ratio = btc / btc_p_today if btc_p_today else 1.0
 
-            # Projected equity prices = today's price × growth ratio
+            # Projected equity prices = today's market price × growth ratio
             mstr_proj = mstr_p_today * btc_ratio
             asst_proj = asst_p_today * btc_ratio
 
@@ -397,6 +395,9 @@ def render_portfolio_tab(
         return f"Q{q} '{str(d.year)[2:]}"
     date_labels = [_qlabel(d) for d in q_dates]
 
+    # ── Today's actual portfolio MV (from CSV prices) ──────────────────────
+    today_total_mv = sum(_live_mv(p) for p in POSITIONS)
+
     # Cost-basis reference line
     fig.add_hline(
         y=_TOTAL_COST,
@@ -405,19 +406,23 @@ def render_portfolio_tab(
         annotation_position="top right",
         annotation_font=dict(color="rgba(255,255,255,0.5)", size=10),
     )
-    # Today's MV reference line
+    # Today's MV reference line (computed from live/CSV prices)
     fig.add_hline(
-        y=_TOTAL_MV,
+        y=today_total_mv,
         line_dash="dash", line_color="rgba(247,147,26,0.5)",
-        annotation_text=f"Today  ${_TOTAL_MV:,.0f}",
+        annotation_text=f"Today  ${today_total_mv:,.0f}",
         annotation_position="bottom right",
         annotation_font=dict(color="rgba(247,147,26,0.7)", size=10),
     )
+    # "Today" scatter marker on each quantile line — prepend to x-axis
+    today_label = f"Today\n(${mstr_p_today:.0f} MSTR\n${btc_p_today:,.0f} BTC)"
 
+    # Prepend "Today" to all traces so the chart starts at actual current value
+    all_labels = ["Today"] + date_labels
     for quant in _QUANTILES:
         fig.add_trace(go.Scatter(
-            x=date_labels,
-            y=forecast[quant],
+            x=all_labels,
+            y=[today_total_mv] + forecast[quant],
             name=_Q_LABELS[quant],
             mode="lines+markers",
             line=dict(color=_Q_COLORS[quant], width=2),
@@ -465,7 +470,7 @@ def render_portfolio_tab(
     breakdown_rows = []
     for qdate in q_dates:
         btc = _blend_btc(qdate, sel_quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn)
-        btc_ratio  = btc / _btc_today[sel_quant] if _btc_today[sel_quant] else 1.0
+        btc_ratio  = btc / btc_p_today if btc_p_today else 1.0
         mstr_proj  = mstr_p_today * btc_ratio
         asst_proj  = asst_p_today * btc_ratio
 
@@ -517,7 +522,7 @@ def render_portfolio_tab(
             opt_pnls = []
             for qdate in q_dates:
                 btc = _blend_btc(qdate, quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn)
-                btc_ratio = btc / _btc_today[quant] if _btc_today[quant] else 1.0
+                btc_ratio = btc / btc_p_today if btc_p_today else 1.0
                 S  = mstr_p_today * btc_ratio if opt_pos["underlying"] == "MSTR" else asst_p_today * btc_ratio
                 iv = iv_mstr if opt_pos["underlying"] == "MSTR" else iv_asst
                 val = _option_value(S, opt_pos["strike"], qdate, opt_pos["expiry"],
