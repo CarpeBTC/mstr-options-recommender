@@ -14,15 +14,22 @@ def _btc_per_share(
     diluted_shares_k: Optional[int] = None,
     ref_date: Optional[date] = None,
 ) -> float:
-    """BTC per fully diluted share, growing at BTC yield rate (declining 1%/yr from btc_yield_yr1)."""
+    """BTC per fully diluted share, growing at BTC yield that decays 75% per year.
+
+    Year 1: btc_yield_yr1  (e.g. 34%)
+    Year 2: btc_yield_yr1 × 0.75   (e.g. 25.5%)
+    Year 3: btc_yield_yr1 × 0.75²  (e.g. 19.1%)
+    Year N: btc_yield_yr1 × 0.75^(N-1)
+    """
     years = (target_date - (ref_date or REF_DATE)).days / 365.25
     btc = float(btc_holdings if btc_holdings is not None else BTC_HOLDINGS)
     shares_k = float(diluted_shares_k if diluted_shares_k is not None else FULLY_DILUTED_SHARES_K)
     year = 0
+    annual_yield = btc_yield_yr1
     while year < years:
         fraction = min(1.0, years - year)
-        annual_yield = max(0.0, btc_yield_yr1 - 0.01 * year)
         btc *= (1 + annual_yield * fraction)
+        annual_yield *= 0.75   # each subsequent year = 75% of the prior year's yield
         year += 1
     return btc / (shares_k * 1000)
 
