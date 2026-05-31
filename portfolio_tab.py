@@ -674,22 +674,30 @@ def render_portfolio_tab(
     # mNAV columns: 0.6 to 4.0 in 0.2 steps
     _mnav_range = [round(0.6 + i * 0.2, 1) for i in range(18)]
 
-    # Row scenario order and display labels
-    _H_QUANTS  = ["q=0.01", "q=0.25", "OLS", "q=0.75", "q=0.99"]
+    # Row scenario order: best on top, bear on bottom
+    _H_QUANTS  = ["q=0.99", "q=0.75", "OLS", "q=0.25", "q=0.01"]
     _H_LABELS  = {
-        "q=0.01": "🐻 Bear (Q1%)",
-        "q=0.25": "🔻 Low (Q25%)",
-        "OLS":    "📊 Median",
+        "q=0.99": "🚀 Euphoria (Q99%)",
         "q=0.75": "🐂 Bull (Q75%)",
-        "q=0.99": "🚀 Best (Q99%)",
+        "OLS":    "📊 Median",
+        "q=0.25": "🔻 Low (Q25%)",
+        "q=0.01": "🐻 Bear (Q1%)",
     }
-    # Row fill colors (50% transparent): bear=red, base=yellow, best=green
+    # Row fill colors (50% transparent): best=green → bear=red
     _H_COLORS  = {
-        "q=0.01": "rgba(210,50,50,0.50)",
-        "q=0.25": "rgba(215,130,50,0.50)",
-        "OLS":    "rgba(210,190,50,0.50)",
-        "q=0.75": "rgba(80,195,80,0.50)",
         "q=0.99": "rgba(30,160,30,0.50)",
+        "q=0.75": "rgba(80,195,80,0.50)",
+        "OLS":    "rgba(210,190,50,0.50)",
+        "q=0.25": "rgba(215,130,50,0.50)",
+        "q=0.01": "rgba(210,50,50,0.50)",
+    }
+    # Typical mNAV range per scenario row (from sidebar mNAV guidance table)
+    _TYPICAL_MNAV = {
+        "q=0.99": (2.5, 3.0),   # Euphoria: mNAV 2.5–3.0×
+        "q=0.75": (1.8, 2.5),   # Bull:     mNAV 1.8–2.5×
+        "OLS":    (1.3, 1.6),   # Base:     mNAV 1.3–1.6×
+        "q=0.25": (0.8, 1.2),   # Low:      mNAV 0.8–1.2×
+        "q=0.01": (0.7, 1.0),   # Bear:     mNAV 0.7–1.0×
     }
 
     # ── Compute matrix values ────────────────────────────────────────────────
@@ -754,7 +762,6 @@ def render_portfolio_tab(
     # ── Build Plotly table ───────────────────────────────────────────────────
     _h_headers = ["Scenario"] + [f"{mv:.1f}×" for mv in _mnav_range]
 
-    # Plotly table needs values as list-of-columns
     _h_col_labels = [_H_LABELS[q] for q in _H_QUANTS]
     _h_data_cols  = [
         [f"${_h_matrix[q][i]:,.0f}" for q in _H_QUANTS]
@@ -762,24 +769,50 @@ def render_portfolio_tab(
     ]
     _h_all_values = [_h_col_labels] + _h_data_cols
 
-    # Fill colors: same row color repeated across all columns
+    # Per-cell fill colors (outer list = columns, inner = rows)
     _h_row_colors = [_H_COLORS[q] for q in _H_QUANTS]
     _h_fill_cols  = [_h_row_colors] + [_h_row_colors for _ in _mnav_range]
+
+    # Per-cell line (border) colors: bright white outline for "typical" cells
+    # First column (labels): standard border
+    _BORDER_TYPICAL = "rgba(255,255,255,0.90)"   # bright white — typical scenario
+    _BORDER_DEFAULT = "rgba(80,80,80,0.60)"       # dim gray    — off-diagonal
+    _h_line_label_col = [_BORDER_DEFAULT] * len(_H_QUANTS)
+    _h_line_data_cols = []
+    for i, mv in enumerate(_mnav_range):
+        col_lines = []
+        for q in _H_QUANTS:
+            lo, hi = _TYPICAL_MNAV[q]
+            col_lines.append(_BORDER_TYPICAL if lo <= mv <= hi else _BORDER_DEFAULT)
+        _h_line_data_cols.append(col_lines)
+    _h_line_cols = [_h_line_label_col] + _h_line_data_cols
+
+    # Font: bold+white for typical, dimmer for off-diagonal
+    _h_font_label_col = ["white"] * len(_H_QUANTS)
+    _h_font_data_cols = []
+    for i, mv in enumerate(_mnav_range):
+        col_fonts = []
+        for q in _H_QUANTS:
+            lo, hi = _TYPICAL_MNAV[q]
+            col_fonts.append("white" if lo <= mv <= hi else "rgba(200,200,200,0.65)")
+        _h_font_data_cols.append(col_fonts)
+    _h_font_cols = [_h_font_label_col] + _h_font_data_cols
 
     fig_heat = go.Figure(data=[go.Table(
         columnwidth=[3] + [2] * len(_mnav_range),
         header=dict(
             values=_h_headers,
             fill_color="#1a1a2e",
-            line_color="#444",
+            line_color="#555",
             font=dict(color="white", size=10),
             align="center",
         ),
         cells=dict(
             values=_h_all_values,
             fill_color=_h_fill_cols,
-            line_color="#333",
-            font=dict(color="white", size=10),
+            line_color=_h_line_cols,
+            line_width=2,
+            font=dict(color=_h_font_cols, size=10),
             align=["left"] + ["right"] * len(_mnav_range),
             height=32,
         ),
