@@ -502,59 +502,65 @@ def render_portfolio_tab(
     st.markdown("---")
     st.subheader("Options P&L Forecast")
 
-    opt_fig = go.Figure()
+    opt_quant = st.selectbox(
+        "Scenario",
+        options=_QUANTILES,
+        index=2,  # default = Median
+        format_func=lambda q: _Q_LABELS[q],
+        key="opt_scenario",
+    )
+
     option_colors = {
         "MSTR271217C250": "#F7931A",
-        "MSTR271217C350": "#ff7f0e",
+        "MSTR271217C350": "#2ca02c",
         "MSTR271217C400": "#d62728",
         "ASST280121C25":  "#00ced1",
     }
-    dash_map = {
-        "q=0.25": "dot",
-        "OLS":    "solid",
-        "q=0.75": "dash",
-    }
 
+    opt_fig = go.Figure()
     for opt_pos in calls:
         sym = opt_pos["symbol"]
-        base_color = option_colors.get(sym, "#aaa")
-        for quant in ["q=0.25", "OLS", "q=0.75"]:
-            opt_pnls = []
-            for qdate in q_dates:
-                btc = _blend_btc(qdate, quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn)
-                btc_ratio = btc / btc_p_today if btc_p_today else 1.0
-                S  = mstr_p_today * btc_ratio if opt_pos["underlying"] == "MSTR" else asst_p_today * btc_ratio
-                iv = iv_mstr if opt_pos["underlying"] == "MSTR" else iv_asst
-                val = _option_value(S, opt_pos["strike"], qdate, opt_pos["expiry"],
-                                    opt_pos["contracts"], iv)
-                opt_pnls.append(val - opt_pos["cost_basis"])
+        color = option_colors.get(sym, "#aaa")
+        opt_pnls = []
+        for qdate in q_dates:
+            btc = _blend_btc(qdate, opt_quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn)
+            btc_ratio = btc / btc_p_today if btc_p_today else 1.0
+            S  = mstr_p_today * btc_ratio if opt_pos["underlying"] == "MSTR" else asst_p_today * btc_ratio
+            iv = iv_mstr if opt_pos["underlying"] == "MSTR" else iv_asst
+            val = _option_value(S, opt_pos["strike"], qdate, opt_pos["expiry"],
+                                opt_pos["contracts"], iv)
+            opt_pnls.append(val - opt_pos["cost_basis"])
 
-            opt_fig.add_trace(go.Scatter(
-                x=date_labels,
-                y=opt_pnls,
-                name=f"{opt_pos['name']} ({_Q_LABELS[quant]})",
-                mode="lines+markers",
-                line=dict(color=base_color, dash=dash_map[quant], width=1.8),
-                marker=dict(size=5),
-                hovertemplate=(
-                    f"<b>{opt_pos['name']} — {_Q_LABELS[quant]}</b><br>"
-                    "%{x}<br>"
-                    "P&L: <b>$%{y:,.0f}</b><extra></extra>"
-                ),
-            ))
+        # Prepend Today (cost = 0 P&L relative to ref_mv, already showing gain/loss)
+        today_opt_pnl = opt_pos["ref_mv"] - opt_pos["cost_basis"]
+        opt_fig.add_trace(go.Scatter(
+            x=["Today"] + all_labels[1:],   # reuse all_labels (Today + quarters)
+            y=[today_opt_pnl] + opt_pnls,
+            name=opt_pos["name"],
+            mode="lines+markers",
+            line=dict(color=color, width=2.5),
+            marker=dict(size=8),
+            hovertemplate=(
+                f"<b>{opt_pos['name']}</b><br>"
+                "%{x}<br>"
+                "P&L vs cost: <b>$%{y:,.0f}</b><extra></extra>"
+            ),
+        ))
 
-    opt_fig.add_hline(y=0, line_dash="dot", line_color="rgba(255,255,255,0.3)")
+    opt_fig.add_hline(y=0, line_dash="dot", line_color="rgba(255,255,255,0.45)",
+                      annotation_text="Break-even", annotation_position="top left",
+                      annotation_font=dict(color="rgba(255,255,255,0.5)", size=10))
     opt_fig.update_layout(
-        title="Options P&L vs Cost Basis  (Q25% / Median / Q75% scenarios)",
+        title=f"Options P&L vs Cost Basis — {_Q_LABELS[opt_quant]} scenario",
         xaxis=dict(title="Quarter", gridcolor="rgba(255,255,255,0.08)"),
         yaxis=dict(
             title="P&L ($)",
             tickprefix="$", tickformat=",.0f",
             gridcolor="rgba(255,255,255,0.08)",
         ),
-        height=480,
+        height=460,
         hovermode="x unified",
-        legend=dict(orientation="h", y=-0.25, font=dict(size=10)),
+        legend=dict(orientation="h", y=-0.18),
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
     )
