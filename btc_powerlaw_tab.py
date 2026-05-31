@@ -72,6 +72,28 @@ def get_model() -> BitcoinPowerLawModel:
     return BitcoinPowerLawModel()
 
 
+@st.cache_data(ttl=86_400)   # refresh once per day — historical closes don't change
+def get_btc_weekly_history():
+    """Fetch weekly BTC-USD closing prices from 2010 to today via yfinance.
+    Returns a pd.Series indexed by date, or an empty Series on failure."""
+    try:
+        import yfinance as yf
+        raw = yf.download(
+            "BTC-USD",
+            start="2010-07-17",
+            interval="1wk",
+            progress=False,
+            auto_adjust=True,
+        )
+        if raw.empty:
+            return pd.Series(dtype=float)
+        close = raw["Close"].dropna()
+        close.index = close.index.tz_localize(None).normalize()   # strip tz, keep date
+        return close
+    except Exception:
+        return pd.Series(dtype=float)
+
+
 # ─────────────────────────────────────────────────────────────────────
 # MAIN RENDER FUNCTION
 # ─────────────────────────────────────────────────────────────────────
@@ -216,6 +238,24 @@ def render_powerlaw_tab():
         line=dict(color=COLORS["full"], width=2.5),
         name="PL + Fund + Harmonic",
     ))
+
+    # ── Actual weekly BTC closes ──────────────────────────────────────
+    _btc_hist = get_btc_weekly_history()
+    if not _btc_hist.empty:
+        _today = pd.Timestamp(date.today())
+        _hist_window = _btc_hist[
+            (_btc_hist.index >= pd.Timestamp(forecast_start)) &
+            (_btc_hist.index <= _today)
+        ]
+        if not _hist_window.empty:
+            fig.add_trace(go.Scatter(
+                x=_hist_window.index,
+                y=_hist_window.values,
+                mode="lines",
+                line=dict(color=COLORS["btc"], width=2),
+                name="BTC (actual)",
+                hovertemplate="<b>BTC Actual</b><br>%{x|%Y-%m-%d}<br>$%{y:,.0f}<extra></extra>",
+            ))
 
     # Vertical line for analysis date (add_vline fails with date axes; use add_shape instead)
     _ad_str = analysis_date.strftime("%Y-%m-%d")
