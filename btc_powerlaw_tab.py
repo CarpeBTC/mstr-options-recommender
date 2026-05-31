@@ -87,9 +87,19 @@ def get_btc_weekly_history():
         )
         if raw.empty:
             return pd.Series(dtype=float)
-        close = raw["Close"].dropna()
-        close.index = close.index.tz_localize(None).normalize()   # strip tz, keep date
-        return close
+
+        # yfinance ≥1.0 returns a MultiIndex DataFrame (column, ticker).
+        # Flatten to a plain Series regardless of version.
+        close = raw["Close"]
+        if isinstance(close, pd.DataFrame):
+            close = close.iloc[:, 0]   # first (only) ticker column
+
+        close = close.dropna()
+        # Strip timezone and normalise to midnight so date comparisons work
+        if hasattr(close.index, "tz") and close.index.tz is not None:
+            close.index = close.index.tz_localize(None)
+        close.index = close.index.normalize()
+        return close.astype(float)
     except Exception:
         return pd.Series(dtype=float)
 
@@ -252,7 +262,7 @@ def render_powerlaw_tab():
                 x=_hist_window.index,
                 y=_hist_window.values,
                 mode="lines",
-                line=dict(color=COLORS["btc"], width=2),
+                line=dict(color="#ffffff", width=2.5),   # white so it's unmistakable
                 name="BTC (actual)",
                 hovertemplate="<b>BTC Actual</b><br>%{x|%Y-%m-%d}<br>$%{y:,.0f}<extra></extra>",
             ))
