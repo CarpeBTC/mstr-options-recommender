@@ -445,7 +445,7 @@ def render_portfolio_tab(
         title=dict(
             text="Total Portfolio Value — MSTR + ASST (BTC-Sensitive + Preferreds)<br>"
                  f"<sup>mNAV {mnav:.1f}x · Model: {'+'.join([n for f, n in [(use_jacobian,'Jac'),(use_bhm,'BHM'),(use_cowen,'Cowen')] if f])}"
-                 f" · Preferreds held at current MV ${preferred_mv:,.0f}</sup>",
+                 f" · STRC/SATA flat; STRF/STRK dividends reinvested</sup>",
             font=dict(size=15),
         ),
         xaxis=dict(title="Quarter", gridcolor="rgba(255,255,255,0.08)"),
