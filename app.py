@@ -462,25 +462,19 @@ with tab1:
 
     today = date.today()
     # Use precomputed BTC prices from shared section
-    j_btc_today  = _j_btc_today;  b_btc_today  = _b_btc_today;  c_btc_today  = _c_btc_today
-    j_btc_expiry = _j_btc_expiry; b_btc_expiry = _b_btc_expiry; c_btc_expiry = _c_btc_expiry
+    j_btc_today  = _j_btc_today;  b_btc_today  = _b_btc_today;  c_btc_today  = _c_btc_today;  p_btc_today  = _p_btc_today
+    j_btc_expiry = _j_btc_expiry; b_btc_expiry = _b_btc_expiry; c_btc_expiry = _c_btc_expiry; p_btc_expiry = _p_btc_expiry
 
     display_quantiles = ["q=0.01", "q=0.25", "OLS", "q=0.75", "q=0.99"]
     _q_nums = {"q=0.01": 0.01, "q=0.25": 0.25, "OLS": 0.50, "q=0.75": 0.75, "q=0.99": 0.99}
 
-    def _model_btc(btc_j, btc_b, btc_c, q_label):
-        """Return average BTC price across all checked models at a given quantile label."""
-        vals = []
-        if use_jacobian and btc_j.get(q_label): vals.append(btc_j[q_label])
-        if use_bhm      and btc_b.get(q_label): vals.append(btc_b[q_label])
-        if use_cowen    and btc_c.get(q_label): vals.append(btc_c[q_label])
-        return float(np.mean(vals)) if vals else None
+    # _model_btc is defined in the shared section above (now includes Perrenod)
 
     # Estimate today's quantile position from live BTC vs model band
     today_q_str = None
     today_q_num = -1.0   # fallback: sorts before all quantile rows
     if btc_live:
-        _qp = [(q, _model_btc(j_btc_today, b_btc_today, c_btc_today, _p_btc_today, q)) for q in display_quantiles]
+        _qp = [(q, _model_btc(j_btc_today, b_btc_today, c_btc_today, p_btc_today, q)) for q in display_quantiles]
         _qp = [(q, p) for q, p in _qp if p]
         _qp.sort(key=lambda x: _q_nums[x[0]])
         if _qp:
@@ -516,9 +510,9 @@ with tab1:
     })
     # Quantile rows
     for q in display_quantiles:
-        btc_t  = _model_btc(j_btc_today, b_btc_today, c_btc_today, _p_btc_today, q)
+        btc_t  = _model_btc(j_btc_today, b_btc_today, c_btc_today, p_btc_today, q)
         mstr_t = _btc_to_mstr(btc_t,  today,       _current_mnav, btc_yield) if btc_t  else None
-        btc_e  = _model_btc(j_btc_expiry, b_btc_expiry, c_btc_expiry, _p_btc_expiry, q)
+        btc_e  = _model_btc(j_btc_expiry, b_btc_expiry, c_btc_expiry, p_btc_expiry, q)
         mstr_e = _btc_to_mstr(btc_e,  expiry_date, mnav, btc_yield) if btc_e  else None
         target_rows.append({
             "Scenario":   q,
@@ -550,8 +544,8 @@ with tab1:
 
     # ── Replace unselected-model E[R] cols with q=0.25 / selected avg / q=0.75 ──────
     # Point return: what you'd earn IF the MSTR price hits exactly the q=X target
-    _btc_q25_d = _model_btc(j_btc_expiry, b_btc_expiry, c_btc_expiry, _p_btc_expiry, "q=0.25")
-    _btc_q75_d = _model_btc(j_btc_expiry, b_btc_expiry, c_btc_expiry, _p_btc_expiry, "q=0.75")
+    _btc_q25_d = _model_btc(j_btc_expiry, b_btc_expiry, c_btc_expiry, p_btc_expiry, "q=0.25")
+    _btc_q75_d = _model_btc(j_btc_expiry, b_btc_expiry, c_btc_expiry, p_btc_expiry, "q=0.75")
     _mstr_q25_d = _btc_to_mstr(_btc_q25_d, expiry_date, mnav, btc_yield) if _btc_q25_d else None
     _mstr_q75_d = _btc_to_mstr(_btc_q75_d, expiry_date, mnav, btc_yield) if _btc_q75_d else None
 
