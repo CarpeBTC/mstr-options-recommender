@@ -759,71 +759,103 @@ def render_portfolio_tab(
 
         _h_matrix[quant] = row_vals
 
-    # ── Build Plotly table ───────────────────────────────────────────────────
-    _h_headers = ["Scenario"] + [f"{mv:.1f}×" for mv in _mnav_range]
+    # ── Build heatmaps (go.Heatmap + shapes for clean 4-sided outlines) ─────
+    # Rows ordered BOTTOM → TOP for heatmap (bear=0, euphoria=4)
+    _H_QUANTS_BT = ["q=0.01", "q=0.25", "OLS", "q=0.75", "q=0.99"]
+    _H_YLABELS   = {
+        "q=0.01": "🐻 Bear Q1%",
+        "q=0.25": "🔻 Low Q25%",
+        "OLS":    "📊 Median",
+        "q=0.75": "🐂 Bull Q75%",
+        "q=0.99": "🚀 Euphoria Q99%",
+    }
 
-    _h_col_labels = [_H_LABELS[q] for q in _H_QUANTS]
-    _h_data_cols  = [
-        [f"${_h_matrix[q][i]/1_000_000:.3f}M" for q in _H_QUANTS]
-        for i in range(len(_mnav_range))
+    # z matrix: row index 0–4 drives background color via colorscale
+    _z_vals = [[i] * len(_mnav_range) for i in range(5)]   # row 0=bear at bottom
+
+    # Custom colorscale: maps 0/4 → 4/4 to bear-red → euphoria-green
+    _hm_colorscale = [
+        [0.00, "rgba(210, 50, 50,0.60)"],
+        [0.25, "rgba(215,130, 50,0.60)"],
+        [0.50, "rgba(210,190, 50,0.60)"],
+        [0.75, "rgba( 80,195, 80,0.60)"],
+        [1.00, "rgba( 30,160, 30,0.60)"],
     ]
-    _h_all_values = [_h_col_labels] + _h_data_cols
 
-    # Per-cell fill colors (outer list = columns, inner = rows)
-    _h_row_colors = [_H_COLORS[q] for q in _H_QUANTS]
-    _h_fill_cols  = [_h_row_colors] + [_h_row_colors for _ in _mnav_range]
+    _x_labels = [f"{mv:.1f}×" for mv in _mnav_range]
+    _y_labels  = [_H_YLABELS[q] for q in _H_QUANTS_BT]
 
-    # Per-cell line (border) colors: bright white outline for "typical" cells
-    # First column (labels): standard border
-    _BORDER_TYPICAL = "rgba(255,255,255,0.90)"   # bright white — typical scenario
-    _BORDER_DEFAULT = "rgba(80,80,80,0.60)"       # dim gray    — off-diagonal
-    _h_line_label_col = [_BORDER_DEFAULT] * len(_H_QUANTS)
-    _h_line_data_cols = []
-    for i, mv in enumerate(_mnav_range):
-        col_lines = []
-        for q in _H_QUANTS:
+    # Text cells for portfolio-value table ($X.XXXM)
+    _text_pv = [
+        [f"${_h_matrix[q][j] / 1_000_000:.3f}M" for j in range(len(_mnav_range))]
+        for q in _H_QUANTS_BT
+    ]
+
+    # Text cells for return-multiple table (value ÷ cost basis)
+    _text_mult = [
+        [f"{_h_matrix[q][j] / _TOTAL_COST:.2f}×" for j in range(len(_mnav_range))]
+        for q in _H_QUANTS_BT
+    ]
+
+    # Rectangle shapes for typical-scenario outlines (all 4 sides, clean white)
+    def _typical_shapes():
+        shapes = []
+        for row_i, q in enumerate(_H_QUANTS_BT):
             lo, hi = _TYPICAL_MNAV[q]
-            col_lines.append(_BORDER_TYPICAL if lo <= mv <= hi else _BORDER_DEFAULT)
-        _h_line_data_cols.append(col_lines)
-    _h_line_cols = [_h_line_label_col] + _h_line_data_cols
+            cols = [j for j, mv in enumerate(_mnav_range) if lo <= mv <= hi]
+            if cols:
+                shapes.append(dict(
+                    type="rect",
+                    xref="x", yref="y",
+                    x0=min(cols) - 0.5, x1=max(cols) + 0.5,
+                    y0=row_i - 0.5,     y1=row_i + 0.5,
+                    line=dict(color="white", width=3),
+                    fillcolor="rgba(0,0,0,0)",
+                    layer="above",
+                ))
+        return shapes
 
-    # Font: bold+white for typical, dimmer for off-diagonal
-    _h_font_label_col = ["white"] * len(_H_QUANTS)
-    _h_font_data_cols = []
-    for i, mv in enumerate(_mnav_range):
-        col_fonts = []
-        for q in _H_QUANTS:
-            lo, hi = _TYPICAL_MNAV[q]
-            col_fonts.append("white" if lo <= mv <= hi else "rgba(200,200,200,0.65)")
-        _h_font_data_cols.append(col_fonts)
-    _h_font_cols = [_h_font_label_col] + _h_font_data_cols
-
-    fig_heat = go.Figure(data=[go.Table(
-        columnwidth=[3] + [2] * len(_mnav_range),
-        header=dict(
-            values=_h_headers,
-            fill_color="#1a1a2e",
-            line_color="#555",
-            font=dict(color="white", size=10),
-            align="center",
-        ),
-        cells=dict(
-            values=_h_all_values,
-            fill_color=_h_fill_cols,
-            line_color=_h_line_cols,
-            line_width=2,
-            font=dict(color=_h_font_cols, size=10),
-            align=["left"] + ["right"] * len(_mnav_range),
-            height=32,
-        ),
-    )])
-    fig_heat.update_layout(
-        height=240,
-        margin=dict(l=0, r=0, t=10, b=0),
+    _hm_layout = dict(
+        height=260,
+        margin=dict(l=120, r=10, t=50, b=10),
         paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(side="top", tickfont=dict(color="white", size=10),
+                   tickangle=0, showgrid=False),
+        yaxis=dict(tickfont=dict(color="white", size=10), showgrid=False),
     )
-    st.plotly_chart(fig_heat, use_container_width=True)
+
+    # ── Table 1: Portfolio Value ($M) ─────────────────────────────────────────
+    fig_pv = go.Figure(go.Heatmap(
+        z=_z_vals, text=_text_pv,
+        texttemplate="%{text}",
+        textfont=dict(size=10, color="white"),
+        x=_x_labels, y=_y_labels,
+        colorscale=_hm_colorscale, zmin=0, zmax=4,
+        showscale=False, xgap=2, ygap=2,
+    ))
+    for _s in _typical_shapes():
+        fig_pv.add_shape(**_s)
+    fig_pv.update_layout(title="Portfolio Value ($M)", **_hm_layout)
+    st.plotly_chart(fig_pv, use_container_width=True)
+
+    # ── Table 2: Return Multiple (Value ÷ Cost Basis) ─────────────────────────
+    fig_mult = go.Figure(go.Heatmap(
+        z=_z_vals, text=_text_mult,
+        texttemplate="%{text}",
+        textfont=dict(size=10, color="white"),
+        x=_x_labels, y=_y_labels,
+        colorscale=_hm_colorscale, zmin=0, zmax=4,
+        showscale=False, xgap=2, ygap=2,
+    ))
+    for _s in _typical_shapes():
+        fig_mult.add_shape(**_s)
+    fig_mult.update_layout(
+        title=f"Return Multiple (Value ÷ Cost Basis ${_TOTAL_COST/1_000_000:.2f}M)",
+        **_hm_layout,
+    )
+    st.plotly_chart(fig_mult, use_container_width=True)
     st.caption(
-        "🐻 Bear = red · 📊 Base = yellow · 🚀 Best = green · "
-        "STRF/STRK shown at current share count (no quarterly compounding in matrix view)."
+        "White outlines = likely scenario for that BTC quantile row based on "
+        "historical mNAV ranges · STRF/STRK at current share count (no compounding)."
     )
