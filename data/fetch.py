@@ -71,6 +71,17 @@ def get_btc_price_live() -> Optional[float]:
         return None
 
 
+@st.cache_data(ttl=3600)  # 1 hour — yield moves slowly
+def get_treasury_yield_10y() -> Optional[float]:
+    """Fetch current 10-year US Treasury yield (^TNX).
+    Returns decimal fraction (e.g. 0.0435 for 4.35%). Returns None on failure."""
+    try:
+        raw = _with_retry(lambda: float(yf.Ticker("^TNX").fast_info.last_price), retries=2, base_delay=3.0)
+        return raw / 100.0   # ^TNX quotes in percent (4.35), convert to decimal
+    except Exception:
+        return None
+
+
 @st.cache_data(ttl=480)   # 8 min — preferred stocks trade less actively
 def get_preferred_price(ticker: str) -> Optional[float]:
     """Fetch last traded price for a preferred stock (e.g. STRK, STRF, STRC).
@@ -118,11 +129,39 @@ def get_strategy_holdings() -> Optional[dict]:
             raise ValueError("__NEXT_DATA__ not found")
         rows = _json.loads(match.group(1))["props"]["pageProps"]["shares"]
         latest = max(rows, key=lambda x: x.get("date", ""))
+
+        # ── Annualised YTD BTC yield (BTC per diluted share, linear extrapolation) ──
+        def _bps(row):
+            btc = float(row.get("total_bitcoin_holdings", 0) or 0)
+            shrs = float(row.get("assumed_diluted_shares_outstanding", 1) or 1)
+            return btc / shrs if shrs > 0 else 0.0
+
+        from datetime import datetime as _dt
+        today_str = _dt.now().strftime("%Y-%m-%d")
+        year_start = f"{_dt.now().year}-01-01"
+        dated = sorted(
+            [(r.get("date", "")[:10], r) for r in rows if r.get("date")],
+            key=lambda x: x[0],
+        )
+        # Find oldest entry on or after Jan 1 of current year
+        ytd_start_candidates = [(d, r) for d, r in dated if d >= year_start]
+        btc_yield_ytd_ann = None
+        if ytd_start_candidates and len(dated) >= 2:
+            start_date, start_row = ytd_start_candidates[0]
+            end_date,   end_row   = dated[-1]
+            bps_start = _bps(start_row)
+            bps_end   = _bps(end_row)
+            days = (_dt.fromisoformat(end_date) - _dt.fromisoformat(start_date)).days
+            if bps_start > 0 and days > 0:
+                ytd_raw = bps_end / bps_start - 1.0
+                btc_yield_ytd_ann = ytd_raw * (365.0 / days)   # linear annualisation
+
         data = {
-            "btc_holdings":     int(latest["total_bitcoin_holdings"]),
-            "diluted_shares_k": int(latest["assumed_diluted_shares_outstanding"]),
-            "as_of":            latest["date"],
-            "source":           "live",
+            "btc_holdings":          int(latest["total_bitcoin_holdings"]),
+            "diluted_shares_k":      int(latest["assumed_diluted_shares_outstanding"]),
+            "as_of":                 latest["date"],
+            "btc_yield_ytd_ann":     btc_yield_ytd_ann,   # float | None
+            "source":                "live",
         }
         try:
             _HOLDINGS_CACHE_FILE.write_text(_json.dumps(data))

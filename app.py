@@ -7,7 +7,7 @@ import plotly.express as px
 from datetime import date, datetime, timedelta
 
 from functools import partial
-from data.fetch import get_equity_data, get_option_chain, get_last_updated, get_btc_price_live, get_strategy_holdings, get_asst_holdings, get_block_height_live, get_preferred_price
+from data.fetch import get_equity_data, get_option_chain, get_last_updated, get_btc_price_live, get_strategy_holdings, get_asst_holdings, get_block_height_live, get_preferred_price, get_treasury_yield_10y
 from models import jacobian, block_height, cowen
 from models.mstr import apply_mnav, btc_to_mstr
 from analytics.kelly import build_portfolio_metrics
@@ -32,6 +32,14 @@ if st.sidebar.button("🔄 Refresh Data", use_container_width=True):
 
 st.sidebar.markdown("---")
 
+# ── Live defaults fetched once per session ────────────────────────────────────
+# These run before the sidebar widgets so the values can be used as defaults.
+# Both are cached (1 hr / 8 min) so they don't add latency to every rerun.
+_treasury_yield = get_treasury_yield_10y()       # e.g. 0.0435 for 4.35%
+_alt_return_default = round(_treasury_yield * 100, 1) if _treasury_yield else 4.3  # 0.0435 → 4.3
+# MSTR BTC yield YTD annualised — fetched alongside holdings below, populated later
+_btc_yield_default = 10  # fallback; overwritten after holdings are fetched
+
 equity = st.sidebar.selectbox(
     "Equity",
     ["MSTR", "ASST"],
@@ -45,10 +53,10 @@ expiry_placeholder = st.sidebar.empty()
 max_spread_pct = st.sidebar.slider("Max Spread % Filter", 5, 100, 50, 5,
                                     help="Exclude strikes where bid-ask spread exceeds "
                                          "this % of the option premium (liquidity filter)")
-alt_return = st.sidebar.slider("Alt. Return (Annual %)", -10.0, 15.0, 4.3, 0.1,
-                                help="Expected annual return on non-invested capital "
-                                     "(e.g. 4.3% = 10Y Treasury, 11.5% = STRC, "
-                                     "-10% = cost of a loan)") / 100
+alt_return = st.sidebar.slider("Alt. Return (Annual %)", -10.0, 15.0, _alt_return_default, 0.1,
+                                help="Expected annual return on non-invested capital. "
+                                     "Default = live 10Y Treasury yield (^TNX). "
+                                     "e.g. 11.5% = STRC, -10% = cost of a loan.") / 100
 mnav = st.sidebar.slider(
     "mNAV — Forward Estimate (Market Cap ÷ BTC NAV)",
     0.5, 3.0, 1.5, 0.1,
@@ -105,7 +113,7 @@ use_jacobian = st.sidebar.checkbox("Jacobian", value=True)
 use_bhm      = st.sidebar.checkbox("Block Height", value=True)
 use_cowen    = st.sidebar.checkbox(
     "Cowen (2026)",
-    value=False,
+    value=True,
     help="Asymmetric quadratic quantile regression — upper-tail (Q75–Q99) curves "
          "downward vs. linear power law, correcting ~+32% optimistic bias 2019–2026.",
 )
@@ -113,7 +121,17 @@ use_cowen    = st.sidebar.checkbox(
 if not any([use_jacobian, use_bhm, use_cowen]):
     use_jacobian = True
 st.sidebar.markdown("---")
-btc_yield = st.sidebar.slider(f"{equity} BTC Yield Yr 1 (%)", 0, 30, 10, 1) / 100
+# BTC yield default: live annualised YTD from strategy.com (populated after holdings fetch)
+# _holdings is fetched later in the data-loading block; we pre-load it here for the default.
+_holdings_for_yield = get_strategy_holdings() if equity == "MSTR" else None
+if _holdings_for_yield and _holdings_for_yield.get("btc_yield_ytd_ann") is not None:
+    _ytd = _holdings_for_yield["btc_yield_ytd_ann"]
+    _btc_yield_default = max(0, min(30, round(_ytd * 100)))  # clamp 0–30, convert to %
+else:
+    _btc_yield_default = 10
+btc_yield = st.sidebar.slider(f"{equity} BTC Yield Yr 1 (%)", 0, 30, _btc_yield_default, 1,
+                               help="Default = annualised YTD BTC yield from strategy.com "
+                                    "(BTC/share growth Jan 1 → today, linearly extrapolated).") / 100
 
 # ── Load Live Data ────────────────────────────────────────────────────────────
 
