@@ -126,12 +126,12 @@ st.sidebar.markdown("---")
 _holdings_for_yield = get_strategy_holdings() if equity == "MSTR" else None
 if _holdings_for_yield and _holdings_for_yield.get("btc_yield_ytd_ann") is not None:
     _ytd = _holdings_for_yield["btc_yield_ytd_ann"]
-    _btc_yield_default = max(0, min(30, round(_ytd * 100)))  # clamp 0–30, convert to %
+    _btc_yield_default = max(0, min(50, round(_ytd * 100)))  # clamp 0–50, convert to %
 else:
     _btc_yield_default = 10
-btc_yield = st.sidebar.slider(f"{equity} BTC Yield Yr 1 (%)", 0, 30, _btc_yield_default, 1,
+btc_yield = st.sidebar.slider(f"{equity} BTC Yield Yr 1 (%)", 0, 50, _btc_yield_default, 1,
                                help="Default = annualised YTD BTC yield from strategy.com "
-                                    "(BTC/share growth Jan 1 → today, linearly extrapolated).") / 100
+                                    "(BTC/share growth Dec 31 → today, linearly extrapolated).") / 100
 
 # ── Load Live Data ────────────────────────────────────────────────────────────
 

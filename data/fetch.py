@@ -131,24 +131,26 @@ def get_strategy_holdings() -> Optional[dict]:
         latest = max(rows, key=lambda x: x.get("date", ""))
 
         # ── Annualised YTD BTC yield (BTC per diluted share, linear extrapolation) ──
+        # Strategy measures BTC Yield from Dec 31 of the prior year.
+        # Use the LAST entry before Jan 1 of the current year as the start point.
         def _bps(row):
             btc = float(row.get("total_bitcoin_holdings", 0) or 0)
             shrs = float(row.get("assumed_diluted_shares_outstanding", 1) or 1)
             return btc / shrs if shrs > 0 else 0.0
 
         from datetime import datetime as _dt
-        today_str = _dt.now().strftime("%Y-%m-%d")
         year_start = f"{_dt.now().year}-01-01"
         dated = sorted(
             [(r.get("date", "")[:10], r) for r in rows if r.get("date")],
             key=lambda x: x[0],
         )
-        # Find oldest entry on or after Jan 1 of current year
-        ytd_start_candidates = [(d, r) for d, r in dated if d >= year_start]
+        # Pre-year rows: Strategy's Dec 31 prior-year reference point
+        pre_year  = [(d, r) for d, r in dated if d < year_start]
+        post_year = [(d, r) for d, r in dated if d >= year_start]
         btc_yield_ytd_ann = None
-        if ytd_start_candidates and len(dated) >= 2:
-            start_date, start_row = ytd_start_candidates[0]
-            end_date,   end_row   = dated[-1]
+        if pre_year and post_year:
+            start_date, start_row = pre_year[-1]   # last 2025 entry = Strategy's YTD basis
+            end_date,   end_row   = dated[-1]       # most recent entry
             bps_start = _bps(start_row)
             bps_end   = _bps(end_row)
             days = (_dt.fromisoformat(end_date) - _dt.fromisoformat(start_date)).days
