@@ -652,3 +652,145 @@ def render_portfolio_tab(
         "Option values estimated via Black-Scholes. IV sliders above control "
         "the volatility assumption. Options with passed expiry shown at intrinsic value."
     )
+
+    # ── mNAV × Scenario Portfolio Value Heatmap ──────────────────────────────
+    st.markdown("---")
+    st.subheader("Portfolio Value: mNAV × Scenario Matrix")
+    st.caption(
+        "Each cell = total portfolio value at the selected date under a given "
+        "BTC quantile scenario (row) and MSTR mNAV assumption (column). "
+        "ASST mNAV held at the sidebar slider value."
+    )
+
+    heat_date = st.date_input(
+        "Forecast Date",
+        value=date(2027, 12, 17),
+        min_value=date.today(),
+        max_value=date(2030, 12, 31),
+        key="heatmap_date",
+        help="Portfolio value is computed for this date under every Q × mNAV combination.",
+    )
+
+    # mNAV columns: 0.6 to 4.0 in 0.2 steps
+    _mnav_range = [round(0.6 + i * 0.2, 1) for i in range(18)]
+
+    # Row scenario order and display labels
+    _H_QUANTS  = ["q=0.01", "q=0.25", "OLS", "q=0.75", "q=0.99"]
+    _H_LABELS  = {
+        "q=0.01": "🐻 Bear (Q1%)",
+        "q=0.25": "🔻 Low (Q25%)",
+        "OLS":    "📊 Median",
+        "q=0.75": "🐂 Bull (Q75%)",
+        "q=0.99": "🚀 Best (Q99%)",
+    }
+    # Row fill colors (50% transparent): bear=red, base=yellow, best=green
+    _H_COLORS  = {
+        "q=0.01": "rgba(210,50,50,0.50)",
+        "q=0.25": "rgba(215,130,50,0.50)",
+        "OLS":    "rgba(210,190,50,0.50)",
+        "q=0.75": "rgba(80,195,80,0.50)",
+        "q=0.99": "rgba(30,160,30,0.50)",
+    }
+
+    # ── Compute matrix values ────────────────────────────────────────────────
+    # For each quantile, blend BTC price once; then vary mNAV across columns.
+    # Option expiry intrinsic values are recomputed per mNAV since MSTR call
+    # payoffs depend directly on MSTR price (= f(mNAV)).
+
+    _h_matrix: dict[str, list[float]] = {}
+
+    for quant in _H_QUANTS:
+        # BTC price at heat_date for this quantile
+        btc_h = _blend_btc(heat_date, quant,
+                           use_jacobian, use_bhm, use_cowen, bhm_price_fn,
+                           use_p=use_perrenod)
+        # BTC at each option expiry (needed for post-expiry intrinsic)
+        btc_exp_cache: dict[date, float] = {}
+        for c in calls:
+            if c["expiry"] not in btc_exp_cache:
+                btc_exp_cache[c["expiry"]] = _blend_btc(
+                    c["expiry"], quant,
+                    use_jacobian, use_bhm, use_cowen, bhm_price_fn,
+                    use_p=use_perrenod,
+                )
+
+        row_vals: list[float] = []
+        for mv in _mnav_range:
+            # Equity at this mNAV
+            mstr_h = btc_to_mstr_fn(btc_h, heat_date, mv, btc_yield) if btc_h > 0 else 0.0
+            asst_h = btc_to_asst_fn(btc_h, heat_date, asst_mnav, btc_yield) if btc_h > 0 else 0.0
+            eq_m   = mstr_shares * mstr_h
+            eq_a   = asst_shares * asst_h
+
+            # Preferred: STRK with this mNAV (no quarterly compounding in heatmap)
+            strk_h_price = _STRK_BOND + _STRK_CONV * mstr_h
+            strk_h_val   = float(_strk_pos["shares"]) * strk_h_price
+            strf_h_val   = float(_strf_pos["shares"]) * _STRF_PRICE
+            pref_h       = strf_h_val + strk_h_val + _STRC_FLAT + _SATA_FLAT
+
+            # Options: use this mNAV for both pre-expiry BS and post-expiry intrinsic
+            opt_h = 0.0
+            for c in calls:
+                if heat_date >= c["expiry"]:
+                    btc_e = btc_exp_cache[c["expiry"]]
+                    if c["underlying"] == "MSTR":
+                        S_e = btc_to_mstr_fn(btc_e, c["expiry"], mv, btc_yield) if btc_e > 0 else 0.0
+                    else:
+                        S_e = btc_to_asst_fn(btc_e, c["expiry"], asst_mnav, btc_yield) if btc_e > 0 else 0.0
+                    opt_h += max(S_e - c["strike"], 0.0) * 100 * c["contracts"]
+                else:
+                    S  = mstr_h if c["underlying"] == "MSTR" else asst_h
+                    iv = iv_mstr if c["underlying"] == "MSTR" else iv_asst
+                    opt_h += _option_value(S, c["strike"], heat_date, c["expiry"],
+                                           c["contracts"], iv)
+
+            # BTC positions (insensitive to mNAV)
+            btc_h_total = sum(qty * btc_h for qty in btc_equiv.values())
+
+            row_vals.append(eq_m + eq_a + pref_h + opt_h + btc_h_total)
+
+        _h_matrix[quant] = row_vals
+
+    # ── Build Plotly table ───────────────────────────────────────────────────
+    _h_headers = ["Scenario"] + [f"{mv:.1f}×" for mv in _mnav_range]
+
+    # Plotly table needs values as list-of-columns
+    _h_col_labels = [_H_LABELS[q] for q in _H_QUANTS]
+    _h_data_cols  = [
+        [f"${_h_matrix[q][i]:,.0f}" for q in _H_QUANTS]
+        for i in range(len(_mnav_range))
+    ]
+    _h_all_values = [_h_col_labels] + _h_data_cols
+
+    # Fill colors: same row color repeated across all columns
+    _h_row_colors = [_H_COLORS[q] for q in _H_QUANTS]
+    _h_fill_cols  = [_h_row_colors] + [_h_row_colors for _ in _mnav_range]
+
+    fig_heat = go.Figure(data=[go.Table(
+        columnwidth=[3] + [2] * len(_mnav_range),
+        header=dict(
+            values=_h_headers,
+            fill_color="#1a1a2e",
+            line_color="#444",
+            font=dict(color="white", size=10),
+            align="center",
+        ),
+        cells=dict(
+            values=_h_all_values,
+            fill_color=_h_fill_cols,
+            line_color="#333",
+            font=dict(color="white", size=10),
+            align=["left"] + ["right"] * len(_mnav_range),
+            height=32,
+        ),
+    )])
+    fig_heat.update_layout(
+        height=240,
+        margin=dict(l=0, r=0, t=10, b=0),
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+    st.plotly_chart(fig_heat, use_container_width=True)
+    st.caption(
+        "🐻 Bear = red · 📊 Base = yellow · 🚀 Best = green · "
+        "STRF/STRK shown at current share count (no quarterly compounding in matrix view)."
+    )
