@@ -816,11 +816,11 @@ def render_portfolio_tab(
         return shapes
 
     _hm_layout = dict(
-        height=260,
-        margin=dict(l=120, r=10, t=50, b=10),
+        height=280,
+        margin=dict(l=130, r=10, t=40, b=50),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        xaxis=dict(side="top", tickfont=dict(color="white", size=10),
+        xaxis=dict(side="bottom", tickfont=dict(color="white", size=10),
                    tickangle=0, showgrid=False),
         yaxis=dict(tickfont=dict(color="white", size=10), showgrid=False),
     )
