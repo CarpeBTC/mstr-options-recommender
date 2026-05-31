@@ -86,6 +86,18 @@ st.sidebar.markdown(
     """,
     unsafe_allow_html=True,
 )
+asst_mnav = st.sidebar.slider(
+    "ASST mNAV — Forward Estimate",
+    0.5, 3.0, 1.5, 0.1,
+    help=(
+        "**ASST mNAV = Market Cap ÷ BTC NAV** for Strive Inc.\n\n"
+        "Current implied ASST mNAV ≈ 1.15× (16,500 BTC / 78.5M shares).\n\n"
+        "**Scenario guidance:**\n"
+        "- 🐻 Bear: 0.8x – 1.0x\n"
+        "- 📊 Base: 1.3x – 1.5x\n"
+        "- 🐂 Bull: 2.0x – 3.0x"
+    ),
+)
 kelly_frac = st.sidebar.slider("Kelly Fraction", 0.1, 1.0, 0.5, 0.05,
                                 help="0.5 = half-Kelly (recommended)")
 st.sidebar.markdown("**Price Models** *(blend checked)*")
@@ -160,6 +172,15 @@ _live_rdate = date.fromisoformat(_live_date) if _live_date else None
 # Partial wrappers that bake in the live holdings — all model calls use these
 _btc_to_mstr = partial(btc_to_mstr,  btc_holdings=_live_btc, diluted_shares_k=_live_shrs, ref_date=_live_rdate)
 _apply_mnav  = partial(apply_mnav,   btc_holdings=_live_btc, diluted_shares_k=_live_shrs, ref_date=_live_rdate)
+
+# ASST holdings for Portfolio tab (always needed regardless of selected equity)
+from data.fetch import (get_asst_holdings as _get_asst_holdings,
+                        ASST_BTC_HOLDINGS, ASST_FULLY_DILUTED_SHARES_K, ASST_REF_DATE)
+_asst_h = _holdings if equity == "ASST" else _get_asst_holdings()
+_asst_btc    = _asst_h["btc_holdings"]     if _asst_h else ASST_BTC_HOLDINGS
+_asst_shrs   = _asst_h["diluted_shares_k"] if _asst_h else ASST_FULLY_DILUTED_SHARES_K
+_asst_rdate  = date.fromisoformat(_asst_h["as_of"]) if _asst_h and _asst_h.get("as_of") else ASST_REF_DATE
+_btc_to_asst = partial(btc_to_mstr, btc_holdings=_asst_btc, diluted_shares_k=_asst_shrs, ref_date=_asst_rdate)
 
 # Fill the mNAV live caption now that we have price + holdings data
 if btc_live and _live_btc and _live_shrs and equity_price:
@@ -1034,14 +1055,16 @@ with tab5:
 # ════════════════════════════════════════════════════════════════════════════
 with tab6:
     render_portfolio_tab(
-        mstr_price_live=mstr_price_live,   # None → portfolio_tab falls back to CSV ref price
-        asst_price_live=asst_price_live,   # None → portfolio_tab falls back to CSV ref price
+        mstr_price_live=mstr_price_live,
+        asst_price_live=asst_price_live,
         btc_price_live=btc_live or 0.0,
         use_jacobian=use_jacobian,
         use_bhm=use_bhm,
         use_cowen=use_cowen,
         mnav=mnav,
+        asst_mnav=asst_mnav,
         btc_yield=btc_yield,
         btc_to_mstr_fn=_btc_to_mstr,
+        btc_to_asst_fn=_btc_to_asst,
         bhm_price_fn=_get_bhm_price,
     )

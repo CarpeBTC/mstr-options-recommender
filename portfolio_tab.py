@@ -195,8 +195,10 @@ def render_portfolio_tab(
     use_bhm: bool,
     use_cowen: bool,
     mnav: float,
+    asst_mnav: float,
     btc_yield: float,
-    btc_to_mstr_fn: Callable,   # partial(btc_to_mstr, btc_holdings=…, diluted_shares_k=…, ref_date=…)
+    btc_to_mstr_fn: Callable,   # partial(btc_to_mstr, MSTR holdings baked in)
+    btc_to_asst_fn: Callable,   # partial(btc_to_mstr, ASST holdings baked in)
     bhm_price_fn: Callable,     # partial(block_height.get_btc_price, ref_height=…, ref_date=…)
 ) -> None:
     today = date.today()
@@ -359,8 +361,7 @@ def render_portfolio_tab(
             mstr_proj = btc_to_mstr_fn(btc, qdate, mnav, btc_yield) if btc > 0 else 0.0
 
             # ASST: scale proportionally to BTC
-            btc_ratio = btc / btc_p_today if btc_p_today else 1.0
-            asst_proj = asst_p_today * btc_ratio
+            asst_proj = btc_to_asst_fn(btc, qdate, asst_mnav, btc_yield) if btc > 0 else 0.0
 
             # STRK: price = bond floor + MSTR conversion option value.
             # Reinvest quarterly dividend at this quarter's STRK price.
@@ -482,8 +483,7 @@ def render_portfolio_tab(
     for qdate in q_dates:
         btc = _blend_btc(qdate, sel_quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn)
         mstr_proj  = btc_to_mstr_fn(btc, qdate, mnav, btc_yield) if btc > 0 else 0.0
-        btc_ratio  = btc / btc_p_today if btc_p_today else 1.0
-        asst_proj  = asst_p_today * btc_ratio
+        asst_proj  = btc_to_asst_fn(btc, qdate, asst_mnav, btc_yield) if btc > 0 else 0.0
 
         # STRF reinvestment
         _bd_strf_shares += (_bd_strf_shares * _STRF_DIV_Q) / _STRF_PRICE
@@ -547,11 +547,11 @@ def render_portfolio_tab(
         opt_pnls = []
         for qdate in q_dates:
             btc = _blend_btc(qdate, opt_quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn)
-            btc_ratio = btc / btc_p_today if btc_p_today else 1.0
+            asst_proj = btc_to_asst_fn(btc, qdate, asst_mnav, btc_yield) if btc > 0 else 0.0
             if opt_pos["underlying"] == "MSTR":
                 S = btc_to_mstr_fn(btc, qdate, mnav, btc_yield) if btc > 0 else 0.0
             else:
-                S = asst_p_today * btc_ratio
+                S = btc_to_asst_fn(btc, qdate, asst_mnav, btc_yield) if btc > 0 else 0.0
             iv = iv_mstr if opt_pos["underlying"] == "MSTR" else iv_asst
             val = _option_value(S, opt_pos["strike"], qdate, opt_pos["expiry"],
                                 opt_pos["contracts"], iv)
