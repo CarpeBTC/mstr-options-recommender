@@ -234,18 +234,60 @@ def render_portfolio_tab(
         f"STRK {_strk_str} · Forecast uses active BTC model blend · Options via Black-Scholes"
     )
 
+    # ── IV sliders — defined here so _live_mv can use them for options pricing ──
+    col_iv1, col_iv2 = st.columns(2)
+    with col_iv1:
+        iv_mstr = st.slider(
+            "MSTR Option IV (for BS pricing)",
+            min_value=0.3, max_value=2.5, value=0.80, step=0.05,
+            help="Implied volatility for Black-Scholes MSTR call forecasting. "
+                 "Current market-implied IV for Dec'27 MSTR options is ~75–100%.",
+        )
+    with col_iv2:
+        iv_asst = st.slider(
+            "ASST Option IV (for BS pricing)",
+            min_value=0.3, max_value=2.5, value=1.00, step=0.05,
+            help="Implied volatility for Black-Scholes ASST call forecasting. "
+                 "Current market-implied IV for Jan'28 ASST C25 is ~100%.",
+        )
+
     # ── Holdings Summary Table ────────────────────────────────────────────────
 
     def _live_mv(p: dict) -> float:
-        """Compute live market value from exact quantities where available."""
+        """Compute live market value using live prices × exact quantities.
+
+        Priority order per asset type:
+          cold storage   : btc_qty × live BTC price
+          equity         : shares × live equity price
+          STRK preferred : shares × live STRK price
+          BTC ETF        : scales ref_mv by live BTC / CSV BTC ratio
+          call option    : Black-Scholes with live underlying + IV slider
+          other preferred: ref_mv (stable fixed-income, minimal drift)
+        """
         if "btc_qty" in p:
             return p["btc_qty"] * btc_p_today
+
         if p["ptype"] == "equity" and "shares" in p:
             price = mstr_p_today if p["underlying"] == "MSTR" else asst_p_today
             return p["shares"] * price if price else p["ref_mv"]
+
         if p["symbol"] == "STRK":
             return p["shares"] * _strk_price_today
-        return p["ref_mv"]
+
+        if p["ptype"] == "btc_etf":
+            # Scale ETF value by the ratio of live BTC to CSV BTC
+            btc_ratio = btc_p_today / BTC_REF_PRICE if BTC_REF_PRICE else 1.0
+            return p["ref_mv"] * btc_ratio
+
+        if p["ptype"] == "call":
+            # Black-Scholes with live underlying price and IV slider
+            today = date.today()
+            S = mstr_p_today if p["underlying"] == "MSTR" else asst_p_today
+            iv = iv_mstr    if p["underlying"] == "MSTR" else iv_asst
+            return _option_value(S, p["strike"], today, p["expiry"],
+                                 p["contracts"], iv)
+
+        return p["ref_mv"]   # preferreds (STRF, STRC, SATA) — stable near par
 
     rows = []
     running_cost = 0.0
@@ -289,24 +331,6 @@ def render_portfolio_tab(
 
     st.markdown("---")
     st.subheader("Quarterly Return Forecast")
-
-    # ── Sidebar-style controls within the tab ─────────────────────────────────
-    col_iv1, col_iv2 = st.columns(2)
-    with col_iv1:
-        iv_mstr = st.slider(
-            "MSTR Option IV (for BS pricing)",
-            min_value=0.3, max_value=2.5, value=0.80, step=0.05,
-            help="Implied volatility for Black-Scholes MSTR call forecasting. "
-                 "Current market-implied IV for Dec'27 MSTR options is ~75–100% "
-                 "(varies by strike — lower for deeper OTM calls).",
-        )
-    with col_iv2:
-        iv_asst = st.slider(
-            "ASST Option IV (for BS pricing)",
-            min_value=0.3, max_value=2.5, value=1.00, step=0.05,
-            help="Implied volatility for Black-Scholes ASST call forecasting. "
-                 "Current market-implied IV for Jan'28 ASST C25 is ~100%.",
-        )
 
     # ── Build forecast grid: dates × quantiles ────────────────────────────────
     q_dates = _quarter_end_dates()
