@@ -571,22 +571,26 @@ def render_portfolio_tab(
         "ASST280121C25":  "#00ced1",
     }
 
-    opt_fig = go.Figure()
+    # ── Pre-compute all option P&L series, then add traces in legend order ────
+    # Legend order (top → bottom): Total (highest) → C350 → C400 → C250 → ASST
+    _LEGEND_ORDER = [
+        "MSTR271217C350", "MSTR271217C400", "MSTR271217C250", "ASST280121C25"
+    ]
 
-    # Accumulate per-quarter P&L totals across all options
+    # Pass 1: compute pnl lists and totals for every call
+    _opt_pnl_cache: dict = {}
     total_today_pnl = 0.0
     total_pnls = [0.0] * len(q_dates)
 
     for opt_pos in calls:
         sym = opt_pos["symbol"]
-        color = option_colors.get(sym, "#aaa")
         opt_pnls = []
         for i, qdate in enumerate(q_dates):
             if qdate >= opt_pos["expiry"]:
-                # Frozen at expiry intrinsic value (cash conversion assumed)
-                val = _expiry_vals[(opt_pos["symbol"], opt_quant)]
+                val = _expiry_vals[(sym, opt_quant)]
             else:
-                btc = _blend_btc(qdate, opt_quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn, use_p=use_perrenod)
+                btc = _blend_btc(qdate, opt_quant, use_jacobian, use_bhm, use_cowen,
+                                  bhm_price_fn, use_p=use_perrenod)
                 if opt_pos["underlying"] == "MSTR":
                     S = btc_to_mstr_fn(btc, qdate, mnav, btc_yield) if btc > 0 else 0.0
                 else:
@@ -598,24 +602,13 @@ def render_portfolio_tab(
             opt_pnls.append(pnl)
             total_pnls[i] += pnl
 
-        today_opt_pnl = opt_pos["ref_mv"] - opt_pos["cost_basis"]
-        total_today_pnl += today_opt_pnl
+        today_pnl = opt_pos["ref_mv"] - opt_pos["cost_basis"]
+        total_today_pnl += today_pnl
+        _opt_pnl_cache[sym] = {"pos": opt_pos, "today": today_pnl, "pnls": opt_pnls}
 
-        opt_fig.add_trace(go.Scatter(
-            x=["Today"] + all_labels[1:],
-            y=[today_opt_pnl] + opt_pnls,
-            name=opt_pos["name"],
-            mode="lines+markers",
-            line=dict(color=color, width=2.5),
-            marker=dict(size=8),
-            hovertemplate=(
-                f"<b>{opt_pos['name']}</b><br>"
-                "%{x}<br>"
-                "P&L vs cost: <b>$%{y:,.0f}</b><extra></extra>"
-            ),
-        ))
+    # Pass 2: add traces in display order — Total first (top of legend), then options
+    opt_fig = go.Figure()
 
-    # Total line — all options combined
     opt_fig.add_trace(go.Scatter(
         x=["Today"] + all_labels[1:],
         y=[total_today_pnl] + total_pnls,
@@ -630,12 +623,30 @@ def render_portfolio_tab(
         ),
     ))
 
+    for sym in _LEGEND_ORDER:
+        d = _opt_pnl_cache[sym]
+        opt_pos = d["pos"]
+        color = option_colors.get(sym, "#aaa")
+        opt_fig.add_trace(go.Scatter(
+            x=["Today"] + all_labels[1:],
+            y=[d["today"]] + d["pnls"],
+            name=opt_pos["name"],
+            mode="lines+markers",
+            line=dict(color=color, width=2.5),
+            marker=dict(size=8),
+            hovertemplate=(
+                f"<b>{opt_pos['name']}</b><br>"
+                "%{x}<br>"
+                "P&L vs cost: <b>$%{y:,.0f}</b><extra></extra>"
+            ),
+        ))
+
     opt_fig.add_hline(y=0, line_dash="dot", line_color="rgba(255,255,255,0.45)",
                       annotation_text="Break-even", annotation_position="top left",
                       annotation_font=dict(color="rgba(255,255,255,0.5)", size=10))
     opt_fig.update_layout(
         title=f"Options P&L vs Cost Basis — {_Q_LABELS[opt_quant]} scenario",
-        xaxis=dict(title="Quarter", gridcolor="rgba(255,255,255,0.08)"),
+        xaxis=dict(gridcolor="rgba(255,255,255,0.08)"),   # removed "Quarter" title
         yaxis=dict(
             title="P&L ($)",
             tickprefix="$", tickformat=",.0f",
@@ -643,7 +654,7 @@ def render_portfolio_tab(
         ),
         height=460,
         hovermode="x unified",
-        legend=dict(orientation="h", y=-0.18),
+        legend=dict(orientation="h", y=-0.12),
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
     )
