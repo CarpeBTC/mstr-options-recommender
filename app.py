@@ -162,8 +162,18 @@ with st.spinner(f"Fetching {_equity_name} data..."):
             _other_equity_price = None
         mstr_price_live = equity_price if equity == "MSTR" else _other_equity_price
         asst_price_live  = equity_price if equity == "ASST"  else _other_equity_price
-        # Fetch STRK live price for Portfolio tab bond-floor calculation
+        # Fetch live prices for Portfolio tab — preferreds + specific option contracts
         strk_price_live = get_preferred_price("STRK")
+        strf_price_live = get_preferred_price("STRF")
+        strc_price_live = get_preferred_price("STRC")
+        sata_price_live = get_preferred_price("SATA")
+        # Option contract tickers (Yahoo Finance format: UNDERLYING+YYMMDD+C+STRIKE*1000)
+        _opt_prices_live = {
+            "MSTR271217C250": get_preferred_price("MSTR271217C00250000"),
+            "MSTR271217C350": get_preferred_price("MSTR271217C00350000"),
+            "MSTR271217C400": get_preferred_price("MSTR271217C00400000"),
+            "ASST280121C25":  get_preferred_price("ASST280121C00025000"),
+        }
         st.session_state.fetch_retry_count = 0  # reset on success
     except Exception as e:
         msg = str(e).lower()
@@ -1105,6 +1115,10 @@ with tab6:
         asst_price_live=asst_price_live,
         btc_price_live=btc_live or 0.0,
         strk_price_live=strk_price_live,
+        strf_price_live=strf_price_live,
+        strc_price_live=strc_price_live,
+        sata_price_live=sata_price_live,
+        opt_prices_live=_opt_prices_live,
         use_jacobian=use_jacobian,
         use_bhm=use_bhm,
         use_cowen=use_cowen,

@@ -196,6 +196,10 @@ def render_portfolio_tab(
     asst_price_live: float,
     btc_price_live: float,
     strk_price_live: Optional[float],
+    strf_price_live: Optional[float],
+    strc_price_live: Optional[float],
+    sata_price_live: Optional[float],
+    opt_prices_live: Optional[dict],
     use_jacobian: bool,
     use_bhm: bool,
     use_cowen: bool,
@@ -274,20 +278,31 @@ def render_portfolio_tab(
         if p["symbol"] == "STRK":
             return p["shares"] * _strk_price_today
 
+        if p["symbol"] == "STRF" and strf_price_live:
+            return p["shares"] * strf_price_live
+        if p["symbol"] == "STRC" and strc_price_live:
+            return p["shares"] * strc_price_live
+        if p["symbol"] == "SATA" and sata_price_live:
+            return p["shares"] * sata_price_live
+
         if p["ptype"] == "btc_etf":
             # Scale ETF value by the ratio of live BTC to CSV BTC
             btc_ratio = btc_p_today / BTC_REF_PRICE if BTC_REF_PRICE else 1.0
             return p["ref_mv"] * btc_ratio
 
         if p["ptype"] == "call":
-            # Black-Scholes with live underlying price and IV slider
+            # Use live market price if available, else Black-Scholes
+            live_price = (opt_prices_live or {}).get(p["symbol"])
+            if live_price and live_price > 0:
+                return live_price * 100 * p["contracts"]
+            # Fallback: Black-Scholes with live underlying price
             today = date.today()
             S = mstr_p_today if p["underlying"] == "MSTR" else asst_p_today
             iv = iv_mstr    if p["underlying"] == "MSTR" else iv_asst
             return _option_value(S, p["strike"], today, p["expiry"],
                                  p["contracts"], iv)
 
-        return p["ref_mv"]   # preferreds (STRF, STRC, SATA) — stable near par
+        return p["ref_mv"]   # catch-all
 
     rows = []
     running_cost = 0.0
