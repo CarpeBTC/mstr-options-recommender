@@ -109,9 +109,9 @@ POSITIONS: List[dict] = [
          cost_basis=2_383.55,   ref_mv=2_389.35),
 
     dict(symbol="IBIT",           name="iShares Bitcoin Trust (IBIT)", category="Bitcoin",
-         ptype="btc_etf",   underlying="BTC",  shares=127.766,  quote_price=41.63,
+         ptype="btc_etf",   underlying="BTC",  shares=259.380,  quote_price=37.99,
          strike=None, expiry=None, contracts=None,
-         cost_basis=5_549.92,   ref_mv=5_318.90),
+         cost_basis=10_549.92,  ref_mv=9_854.37),   # added 131.614 sh @ $37.99 on Jun 2 2026
 
     dict(symbol="INDEX:NQBT",     name="BTC Cold Storage (NQBT)",      category="Bitcoin",
          ptype="btc_cold",  underlying="BTC",  quote_price=BTC_REF_PRICE,
