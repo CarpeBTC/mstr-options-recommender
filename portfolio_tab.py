@@ -212,6 +212,7 @@ def render_portfolio_tab(
     mnav: float,
     asst_mnav: float,
     btc_yield: float,
+    asst_btc_yield: float,      # ASST's own annualised BTC yield (from treasury.strive.com)
     btc_to_mstr_fn: Callable,   # partial(btc_to_mstr, MSTR holdings baked in)
     btc_to_asst_fn: Callable,   # partial(btc_to_mstr, ASST holdings baked in)
     bhm_price_fn: Callable,     # partial(block_height.get_btc_price, ref_height=…, ref_date=…)
@@ -411,7 +412,7 @@ def render_portfolio_tab(
             if c["underlying"] == "MSTR":
                 S_e = btc_to_mstr_fn(btc_e, c["expiry"], mnav, btc_yield) if btc_e > 0 else 0.0
             else:
-                S_e = btc_to_asst_fn(btc_e, c["expiry"], asst_mnav, btc_yield) if btc_e > 0 else 0.0
+                S_e = btc_to_asst_fn(btc_e, c["expiry"], asst_mnav, asst_btc_yield) if btc_e > 0 else 0.0
             _expiry_vals[(c["symbol"], quant)] = max(S_e - c["strike"], 0.0) * 100 * c["contracts"]
 
     # ── Forecast grid ─────────────────────────────────────────────────────────
@@ -430,7 +431,7 @@ def render_portfolio_tab(
             mstr_proj = btc_to_mstr_fn(btc, qdate, mnav, btc_yield) if btc > 0 else 0.0
 
             # ASST: scale proportionally to BTC
-            asst_proj = btc_to_asst_fn(btc, qdate, asst_mnav, btc_yield) if btc > 0 else 0.0
+            asst_proj = btc_to_asst_fn(btc, qdate, asst_mnav, asst_btc_yield) if btc > 0 else 0.0
 
             # STRK: price = bond floor + MSTR conversion option value.
             # Reinvest quarterly dividend at this quarter's STRK price.
@@ -555,7 +556,7 @@ def render_portfolio_tab(
     for qdate in q_dates:
         btc = _blend_btc(qdate, sel_quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn, use_p=use_perrenod)
         mstr_proj  = btc_to_mstr_fn(btc, qdate, mnav, btc_yield) if btc > 0 else 0.0
-        asst_proj  = btc_to_asst_fn(btc, qdate, asst_mnav, btc_yield) if btc > 0 else 0.0
+        asst_proj  = btc_to_asst_fn(btc, qdate, asst_mnav, asst_btc_yield) if btc > 0 else 0.0
 
         # STRF reinvestment
         _bd_strf_shares += (_bd_strf_shares * _STRF_DIV_Q) / _STRF_PRICE
@@ -640,7 +641,7 @@ def render_portfolio_tab(
                 if opt_pos["underlying"] == "MSTR":
                     S = btc_to_mstr_fn(btc, qdate, mnav, btc_yield) if btc > 0 else 0.0
                 else:
-                    S = btc_to_asst_fn(btc, qdate, asst_mnav, btc_yield) if btc > 0 else 0.0
+                    S = btc_to_asst_fn(btc, qdate, asst_mnav, asst_btc_yield) if btc > 0 else 0.0
                 iv = iv_mstr if opt_pos["underlying"] == "MSTR" else iv_asst
                 val = _option_value(S, opt_pos["strike"], qdate, opt_pos["expiry"],
                                     opt_pos["contracts"], iv)
@@ -783,7 +784,7 @@ def render_portfolio_tab(
         for mv in _mnav_range:
             # Equity at this mNAV
             mstr_h = btc_to_mstr_fn(btc_h, heat_date, mv, btc_yield) if btc_h > 0 else 0.0
-            asst_h = btc_to_asst_fn(btc_h, heat_date, asst_mnav, btc_yield) if btc_h > 0 else 0.0
+            asst_h = btc_to_asst_fn(btc_h, heat_date, asst_mnav, asst_btc_yield) if btc_h > 0 else 0.0
             eq_m   = mstr_shares * mstr_h
             eq_a   = asst_shares * asst_h
 
@@ -801,7 +802,7 @@ def render_portfolio_tab(
                     if c["underlying"] == "MSTR":
                         S_e = btc_to_mstr_fn(btc_e, c["expiry"], mv, btc_yield) if btc_e > 0 else 0.0
                     else:
-                        S_e = btc_to_asst_fn(btc_e, c["expiry"], asst_mnav, btc_yield) if btc_e > 0 else 0.0
+                        S_e = btc_to_asst_fn(btc_e, c["expiry"], asst_mnav, asst_btc_yield) if btc_e > 0 else 0.0
                     opt_h += max(S_e - c["strike"], 0.0) * 100 * c["contracts"]
                 else:
                     S  = mstr_h if c["underlying"] == "MSTR" else asst_h

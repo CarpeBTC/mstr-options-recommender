@@ -231,6 +231,10 @@ _asst_h = _holdings if equity == "ASST" else _get_asst_holdings()
 _asst_btc    = _asst_h["btc_holdings"]     if _asst_h else ASST_BTC_HOLDINGS
 _asst_shrs   = _asst_h["diluted_shares_k"] if _asst_h else ASST_FULLY_DILUTED_SHARES_K
 _asst_rdate  = date.fromisoformat(_asst_h["as_of"]) if _asst_h and _asst_h.get("as_of") else ASST_REF_DATE
+# ASST's own annualised BTC yield — used for ASST option pricing in Portfolio tab
+# so ASST projections are consistent with the Recommendations tab when ASST is selected
+_asst_ytd    = (_asst_h or {}).get("btc_yield_ytd_ann")
+_asst_btc_yield = max(0.0, min(0.50, _asst_ytd)) if _asst_ytd else 0.34  # cap same as slider
 _btc_to_asst = partial(btc_to_mstr, btc_holdings=_asst_btc, diluted_shares_k=_asst_shrs, ref_date=_asst_rdate)
 
 # Fill the mNAV live caption now that we have price + holdings data
@@ -1140,6 +1144,7 @@ with tab6:
         mnav=mnav,
         asst_mnav=asst_mnav,
         btc_yield=btc_yield,
+        asst_btc_yield=_asst_btc_yield,   # ASST's own BTC yield (not MSTR's)
         btc_to_mstr_fn=_btc_to_mstr,
         btc_to_asst_fn=_btc_to_asst,
         bhm_price_fn=_get_bhm_price,
