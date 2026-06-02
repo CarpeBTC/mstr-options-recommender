@@ -94,12 +94,17 @@ st.sidebar.markdown(
     """,
     unsafe_allow_html=True,
 )
+_asst_h_nav = get_asst_holdings()   # cached — no extra latency
+_asst_nav_live = _asst_h_nav.get("nav_premium") if _asst_h_nav else None
+_asst_mnav_default = round((_asst_nav_live or 1.5) * 10) / 10   # round to nearest 0.1
+_asst_mnav_default = max(0.5, min(3.0, _asst_mnav_default))      # clamp to slider range
+_asst_nav_note = f"Current live mNAV: **{_asst_nav_live:.2f}×** (from treasury.strive.com)" if _asst_nav_live else "Live mNAV unavailable"
 asst_mnav = st.sidebar.slider(
     "ASST mNAV — Forward Estimate",
-    0.5, 3.0, 1.5, 0.1,
+    0.5, 3.0, _asst_mnav_default, 0.1,
     help=(
-        "**ASST mNAV = Market Cap ÷ BTC NAV** for Strive Inc.\n\n"
-        "Current implied ASST mNAV ≈ 1.15× (16,500 BTC / 78.5M shares).\n\n"
+        f"**ASST mNAV = Market Cap ÷ BTC NAV** for Strive Inc.\n\n"
+        f"{_asst_nav_note}\n\n"
         "**Scenario guidance:**\n"
         "- 🐻 Bear: 0.8x – 1.0x\n"
         "- 📊 Base: 1.3x – 1.5x\n"
