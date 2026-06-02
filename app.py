@@ -130,15 +130,19 @@ if not any([use_jacobian, use_bhm, use_cowen, use_perrenod]):
 st.sidebar.markdown("---")
 # BTC yield default: live annualised YTD from strategy.com (populated after holdings fetch)
 # _holdings is fetched later in the data-loading block; we pre-load it here for the default.
-_holdings_for_yield = get_strategy_holdings() if equity == "MSTR" else None
+if equity == "MSTR":
+    _holdings_for_yield = get_strategy_holdings()
+    _yield_source = "strategy.com (BTC/share growth Dec 31 → today, linearly extrapolated)"
+else:
+    _holdings_for_yield = get_asst_holdings()
+    _yield_source = "treasury.strive.com via data.strategytracker.com (same methodology as MSTR)"
 if _holdings_for_yield and _holdings_for_yield.get("btc_yield_ytd_ann") is not None:
     _ytd = _holdings_for_yield["btc_yield_ytd_ann"]
     _btc_yield_default = max(0, min(50, round(_ytd * 100)))  # clamp 0–50, convert to %
 else:
     _btc_yield_default = 10
 btc_yield = st.sidebar.slider(f"{equity} BTC Yield Yr 1 (%)", 0, 50, _btc_yield_default, 1,
-                               help="Default = annualised YTD BTC yield from strategy.com "
-                                    "(BTC/share growth Dec 31 → today, linearly extrapolated).") / 100
+                               help=f"Default = annualised YTD BTC yield from {_yield_source}.") / 100
 
 # ── Load Live Data ────────────────────────────────────────────────────────────
 

@@ -224,10 +224,23 @@ def get_asst_holdings() -> Optional[dict]:
         diluted_shares_k = diluted_shares // 1000
         as_of = timestamp[:10] if timestamp else ""
 
+        # btcYieldYtd is the raw YTD BTC/share growth (same metric as MSTR's YTD yield).
+        # Annualise using days elapsed since Jan 1 of current year (linear, same method as MSTR).
+        from datetime import datetime as _dt2
+        year_start = _dt2(_dt2.now().year, 1, 1)
+        days_elapsed = (_dt2.now() - year_start).days
+        btc_yield_ytd_raw = asst.get("btcYieldYtd")   # e.g. 36.66 (percent)
+        btc_yield_ytd_ann = None
+        if btc_yield_ytd_raw is not None and days_elapsed > 0:
+            raw_frac = float(btc_yield_ytd_raw) / 100.0
+            btc_yield_ytd_ann = raw_frac * (365.0 / days_elapsed)
+
         data = {
             "btc_holdings":     int(btc_holdings),
             "diluted_shares_k": diluted_shares_k,
             "as_of":            as_of,
+            "btc_yield_ytd_ann": btc_yield_ytd_ann,   # annualised, same methodology as MSTR
+            "nav_premium":      asst.get("navPremium"),
             "source":           "live",
         }
         try:
