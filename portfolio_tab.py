@@ -97,6 +97,11 @@ POSITIONS: List[dict] = [
          strike=25.0, expiry=date(2028, 1, 21), contracts=4,
          cost_basis=3_394.69,   ref_mv=3_160.00),
 
+    dict(symbol="ASST280121C35",  name="ASST Jan'28 $35 Call",        category="Strive",
+         ptype="call",      underlying="ASST",  quote_price=5.15,   # $515/contract ÷ 100
+         strike=35.0, expiry=date(2028, 1, 21), contracts=5,        # 5 contracts, Jun 2 2026
+         cost_basis=2_575.00,   ref_mv=2_575.00),   # bought today — cost = market
+
     # ── Bitcoin (direct / ETF) ────────────────────────────────────────────────
     dict(symbol="FBTC",           name="Fidelity Bitcoin Fund (FBTC)", category="Bitcoin",
          ptype="btc_etf",   underlying="BTC",  shares=37.392,   quote_price=63.90,
@@ -608,12 +613,14 @@ def render_portfolio_tab(
         "MSTR271217C350": "#2ca02c",
         "MSTR271217C400": "#d62728",
         "ASST280121C25":  "#00ced1",
+        "ASST280121C35":  "#da70d6",   # orchid/purple — new Jun 2026 position
     }
 
     # ── Pre-compute all option P&L series, then add traces in legend order ────
     # Legend order (top → bottom): Total (highest) → C350 → C400 → C250 → ASST
     _LEGEND_ORDER = [
-        "MSTR271217C350", "MSTR271217C400", "MSTR271217C250", "ASST280121C25"
+        "MSTR271217C350", "MSTR271217C400", "MSTR271217C250",
+        "ASST280121C25",  "ASST280121C35",
     ]
 
     # Pass 1: compute pnl lists and totals for every call

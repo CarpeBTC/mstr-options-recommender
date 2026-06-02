@@ -182,6 +182,7 @@ with st.spinner(f"Fetching {_equity_name} data..."):
             "MSTR271217C350": get_preferred_price("MSTR271217C00350000"),
             "MSTR271217C400": get_preferred_price("MSTR271217C00400000"),
             "ASST280121C25":  get_preferred_price("ASST280121C00025000"),
+            "ASST280121C35":  get_preferred_price("ASST280121C00035000"),
         }
         st.session_state.fetch_retry_count = 0  # reset on success
     except Exception as e:
