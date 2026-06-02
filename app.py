@@ -96,9 +96,13 @@ st.sidebar.markdown(
 )
 _asst_h_nav = get_asst_holdings()   # cached — no extra latency
 _asst_nav_live = _asst_h_nav.get("nav_premium") if _asst_h_nav else None
-_asst_mnav_default = round((_asst_nav_live or 1.5) * 10) / 10   # round to nearest 0.1
-_asst_mnav_default = max(0.5, min(3.0, _asst_mnav_default))      # clamp to slider range
-_asst_nav_note = f"Current live mNAV: **{_asst_nav_live:.2f}×** (from treasury.strive.com)" if _asst_nav_live else "Live mNAV unavailable"
+# Default = 1.5x forward estimate (same basis as MSTR mNAV slider).
+# Live value is shown in the tooltip for reference only — it represents
+# today's mNAV, not the expected mNAV at option expiry.
+_asst_mnav_default = 1.5
+_asst_nav_note = (f"Current live mNAV: **{_asst_nav_live:.2f}×** (from treasury.strive.com). "
+                  f"Default is the **forward** estimate, not today's value.")  \
+                 if _asst_nav_live else "Live mNAV unavailable — set forward estimate manually."
 asst_mnav = st.sidebar.slider(
     "ASST mNAV — Forward Estimate",
     0.5, 3.0, _asst_mnav_default, 0.1,
