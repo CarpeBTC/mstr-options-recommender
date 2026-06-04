@@ -52,14 +52,11 @@ POSITIONS: List[dict] = [
          cost_basis=54_191.25,  ref_mv=52_092.59),
 
     dict(symbol="STRK",           name="Strategy 10% Perp Pfd (STRK)",category="Strategy",
-         ptype="preferred", underlying=None,    shares=930,      quote_price=70.27,
+         ptype="preferred", underlying=None,    shares=1_342.683, quote_price=68.52,
          strike=None, expiry=None, contracts=None,
-         cost_basis=72_958.41,  ref_mv=65_351.10),
+         cost_basis=101_235.45, ref_mv=91_998.24),  # +412.683 sh @ $68.52 on Jun 4 2026
 
-    dict(symbol="STRF",           name="Strategy 10% Pfd (STRF)",     category="Strategy",
-         ptype="preferred", underlying=None,    shares=300,      quote_price=98.50,
-         strike=None, expiry=None, contracts=None,
-         cost_basis=30_217.50,  ref_mv=29_550.00),
+    # STRF sold entirely on Jun 4 2026 (300 sh @ $95.80 = $28,740, realised -$1,477)
 
     dict(symbol="STRC",           name="Strategy 11% Var Pfd (STRC)", category="Strategy",
          ptype="preferred", underlying=None,    shares=500,      quote_price=98.99,
@@ -83,9 +80,9 @@ POSITIONS: List[dict] = [
 
     # ── Strive / ASST ─────────────────────────────────────────────────────────
     dict(symbol="ASST",           name="Strive Inc Cl A (ASST)",      category="Strive",
-         ptype="equity",    underlying="ASST",  shares=1_200,    quote_price=17.67,
+         ptype="equity",    underlying="ASST",  shares=1_534.45, quote_price=14.95,
          strike=None, expiry=None, contracts=None,
-         cost_basis=18_600.00,  ref_mv=21_204.00),
+         cost_basis=23_600.03,  ref_mv=22_940.03),  # +334.45 sh @ $14.95 on Jun 3 2026
 
     dict(symbol="SATA",           name="Strive 12.25% Var Pfd (SATA)",category="Strive",
          ptype="preferred", underlying=None,    shares=50,       quote_price=100.01,
@@ -109,9 +106,9 @@ POSITIONS: List[dict] = [
          cost_basis=2_383.55,   ref_mv=2_389.35),
 
     dict(symbol="IBIT",           name="iShares Bitcoin Trust (IBIT)", category="Bitcoin",
-         ptype="btc_etf",   underlying="BTC",  shares=259.380,  quote_price=37.99,
+         ptype="btc_etf",   underlying="BTC",  shares=394.023,  quote_price=37.14,
          strike=None, expiry=None, contracts=None,
-         cost_basis=10_549.92,  ref_mv=9_854.37),   # added 131.614 sh @ $37.99 on Jun 2 2026
+         cost_basis=15_550.56,  ref_mv=14_634.01),  # +134.643 sh @ $37.14 on Jun 3 2026
 
     dict(symbol="INDEX:NQBT",     name="BTC Cold Storage (NQBT)",      category="Bitcoin",
          ptype="btc_cold",  underlying="BTC",  quote_price=BTC_REF_PRICE,
@@ -378,11 +375,11 @@ def render_portfolio_tab(
     calls = [p for p in POSITIONS if p["ptype"] == "call"]
 
     # ── Preferred stock constants ─────────────────────────────────────────────
-    # STRF: fixed 10% pfd, $2.50/share/qtr dividend reinvested at $98.50 par
-    _strf_pos    = next(p for p in POSITIONS if p["symbol"] == "STRF")
-    _STRF_PRICE  = _strf_pos["quote_price"]   # $98.50 (assumed stable)
-    _STRF_DIV_Q  = 2.50                        # per share per quarter
-    _strf_shares = float(_strf_pos["shares"])  # 300 — running count
+    # STRF: sold entirely Jun 4 2026 — position closed, value = 0
+    _strf_pos    = next((p for p in POSITIONS if p["symbol"] == "STRF"), None)
+    _STRF_PRICE  = _strf_pos["quote_price"] if _strf_pos else 98.50
+    _STRF_DIV_Q  = 2.50
+    _strf_shares = float(_strf_pos["shares"]) if _strf_pos else 0.0  # 0 — sold
 
     # STRK: perpetual pfd with 10:1 MSTR conversion option
     #   STRK price  = bond_floor + 0.10 × MSTR_price
@@ -549,7 +546,7 @@ def render_portfolio_tab(
     )
 
     # Re-run STRF/STRK reinvestment from scratch for the selected scenario
-    _bd_strf_shares = float(_strf_pos["shares"])
+    _bd_strf_shares = float(_strf_pos["shares"]) if _strf_pos else 0.0
     _bd_strk_shares = float(_strk_pos["shares"])
 
     breakdown_rows = []
@@ -791,7 +788,7 @@ def render_portfolio_tab(
             # Preferred: STRK with this mNAV (no quarterly compounding in heatmap)
             strk_h_price = _STRK_BOND + _STRK_CONV * mstr_h
             strk_h_val   = float(_strk_pos["shares"]) * strk_h_price
-            strf_h_val   = float(_strf_pos["shares"]) * _STRF_PRICE
+            strf_h_val   = (float(_strf_pos["shares"]) * _STRF_PRICE) if _strf_pos else 0.0
             pref_h       = strf_h_val + strk_h_val + _STRC_FLAT + _SATA_FLAT
 
             # Options: use this mNAV for both pre-expiry BS and post-expiry intrinsic
