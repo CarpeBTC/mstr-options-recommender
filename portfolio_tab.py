@@ -163,7 +163,7 @@ def _blend_btc(
     use_m: bool = False,
 ) -> float:
     """Average BTC price at *target* across checked models for *quantile*."""
-    from models import perrenod as _perrenod, marty as _marty
+    from models import perrenod as _perrenod, marty_cohort as _marty_cohort
     vals = []
     if use_j:
         vals.append(jacobian.get_btc_price(target).get(quantile, 0.0))
@@ -174,7 +174,7 @@ def _blend_btc(
     if use_p:
         vals.append(_perrenod.get_btc_price(target).get(quantile, 0.0))
     if use_m:
-        vals.append(_marty.get_btc_price(target).get(quantile, 0.0))
+        vals.append(_marty_cohort.get_btc_price(target).get(quantile, 0.0))
     return float(np.mean(vals)) if vals else 0.0
 
 

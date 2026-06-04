@@ -8,7 +8,7 @@ from datetime import date, datetime, timedelta
 
 from functools import partial
 from data.fetch import get_equity_data, get_option_chain, get_last_updated, get_btc_price_live, get_strategy_holdings, get_asst_holdings, get_block_height_live, get_preferred_price, get_treasury_yield_10y
-from models import jacobian, block_height, cowen, perrenod, marty
+from models import jacobian, block_height, cowen, perrenod, marty, marty_cohort
 from models.mstr import apply_mnav, btc_to_mstr
 from analytics.kelly import build_portfolio_metrics
 from btc_powerlaw_tab import render_powerlaw_tab
@@ -283,9 +283,7 @@ j_scenarios_raw = jacobian.get_scenario_prices(expiry_date)
 b_scenarios_raw = _get_bhm_scenarios(expiry_date)
 c_scenarios_raw = cowen.get_scenario_prices(expiry_date)
 p_scenarios_raw = perrenod.get_scenario_prices(expiry_date)
-m_scenarios_raw = marty.get_scenario_prices(expiry_date,
-                       ref_height=_live_block_height,
-                       ref_date=date.today() if _live_block_height else None)
+m_scenarios_raw = marty_cohort.get_scenario_prices(expiry_date)  # cohort forecast
 
 j_scenarios = _apply_mnav(j_scenarios_raw, expiry_date, mnav, btc_yield)
 b_scenarios = _apply_mnav(b_scenarios_raw, expiry_date, mnav, btc_yield)
@@ -433,12 +431,12 @@ _j_btc_today  = jacobian.get_btc_price(date.today())
 _b_btc_today  = _get_bhm_price(date.today())
 _c_btc_today  = cowen.get_btc_price(date.today())
 _p_btc_today  = perrenod.get_btc_price(date.today())
-_m_btc_today  = marty.get_btc_price(date.today(), _live_block_height, date.today() if _live_block_height else None)
+_m_btc_today  = marty_cohort.get_btc_price(date.today())
 _j_btc_expiry = jacobian.get_btc_price(expiry_date)
 _b_btc_expiry = _get_bhm_price(expiry_date)
 _c_btc_expiry = cowen.get_btc_price(expiry_date)
 _p_btc_expiry = perrenod.get_btc_price(expiry_date)
-m_btc_expiry = marty.get_btc_price(expiry_date, _live_block_height, date.today() if _live_block_height else None)
+m_btc_expiry = marty_cohort.get_btc_price(expiry_date)
 
 
 def _model_btc(btc_j, btc_b, btc_c, btc_p, btc_m, q_label):
@@ -728,7 +726,7 @@ with tab2:
     m_quants_to_plot = ["q=0.01", "q=0.25", "OLS", "q=0.75", "q=0.99"]
     colors_m = ["#8b0000", "#cd853f", "#daa520", "#6b8e23", "#2e8b57"]  # earthy greens/golds
     for q, color in zip(m_quants_to_plot, colors_m):
-        prices_m = [marty.get_btc_price(d, _live_block_height, date.today() if _live_block_height else None).get(q, 0) for d in proj_dates]
+        prices_m = [marty_cohort.get_btc_price(d).get(q, 0) for d in proj_dates]
         fig_btc.add_trace(go.Scatter(
             x=proj_dates, y=prices_m, name=f"Marty {q}",
             line=dict(color=color, dash="dashdot"), mode="lines"
