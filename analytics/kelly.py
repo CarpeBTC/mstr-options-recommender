@@ -112,7 +112,8 @@ def build_portfolio_metrics(strikes: list[float], premiums: dict[float, float],
                              kelly_fraction: float, bankroll: float,
                              r_period: float = 0.0,
                              c_scenarios: Optional[List[dict]] = None,
-                             p_scenarios: Optional[List[dict]] = None) -> pd.DataFrame:
+                             p_scenarios: Optional[List[dict]] = None,
+                             m_scenarios: Optional[List[dict]] = None) -> pd.DataFrame:
     """
     Build the full Portfolio Growth Metrics table.
 
@@ -188,5 +189,17 @@ def build_portfolio_metrics(strikes: list[float], premiums: dict[float, float],
         ).reindex(valid_strikes, fill_value=0.0)
         df["Perrenod E[R]"]    = p_er.round(2)
         df["Perrenod Kelly f*"] = p_kelly_full.round(4)
+
+    # ── Marty model columns (optional) ───────────────────────────────────────
+    if m_scenarios is not None:
+        m_probs = {s["label"]: s["prob"] for s in m_scenarios}
+        m_returns = compute_returns(strikes, premiums, m_scenarios)
+        m_valid = [s for s in valid_strikes if s in m_returns.index]
+        m_er = expected_return(m_returns.loc[m_valid], m_probs).reindex(valid_strikes)
+        m_kelly_full = single_asset_kelly_full(
+            m_returns.loc[m_valid], m_probs, r_period
+        ).reindex(valid_strikes, fill_value=0.0)
+        df["Marty E[R]"]    = m_er.round(2)
+        df["Marty Kelly f*"] = m_kelly_full.round(4)
 
     return df.sort_values("$ Allocated", ascending=False)

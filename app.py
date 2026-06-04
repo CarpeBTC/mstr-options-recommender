@@ -8,7 +8,7 @@ from datetime import date, datetime, timedelta
 
 from functools import partial
 from data.fetch import get_equity_data, get_option_chain, get_last_updated, get_btc_price_live, get_strategy_holdings, get_asst_holdings, get_block_height_live, get_preferred_price, get_treasury_yield_10y
-from models import jacobian, block_height, cowen, perrenod
+from models import jacobian, block_height, cowen, perrenod, marty
 from models.mstr import apply_mnav, btc_to_mstr
 from analytics.kelly import build_portfolio_metrics
 from btc_powerlaw_tab import render_powerlaw_tab
@@ -133,8 +133,14 @@ use_perrenod = st.sidebar.checkbox(
          "Symmetric normal-distribution scenario probabilities. "
          "Highlights surge behaviour the plain power law misses.",
 )
+use_marty = st.sidebar.checkbox(
+    "Marty (2026)",
+    value=True,
+    help="11-quantile log-log regression on block height (mnav.marty-5b9.workers.dev). "
+         "Empirical quantile bands Q1–Q99. Currently shows BTC at q≈4.2%.",
+)
 # Ensure at least one model is always active
-if not any([use_jacobian, use_bhm, use_cowen, use_perrenod]):
+if not any([use_jacobian, use_bhm, use_cowen, use_perrenod, use_marty]):
     use_jacobian = True
 st.sidebar.markdown("---")
 # BTC yield default: live annualised YTD from strategy.com (populated after holdings fetch)
@@ -277,11 +283,15 @@ j_scenarios_raw = jacobian.get_scenario_prices(expiry_date)
 b_scenarios_raw = _get_bhm_scenarios(expiry_date)
 c_scenarios_raw = cowen.get_scenario_prices(expiry_date)
 p_scenarios_raw = perrenod.get_scenario_prices(expiry_date)
+m_scenarios_raw = marty.get_scenario_prices(expiry_date,
+                       ref_height=_live_block_height,
+                       ref_date=date.today() if _live_block_height else None)
 
 j_scenarios = _apply_mnav(j_scenarios_raw, expiry_date, mnav, btc_yield)
 b_scenarios = _apply_mnav(b_scenarios_raw, expiry_date, mnav, btc_yield)
 c_scenarios = _apply_mnav(c_scenarios_raw, expiry_date, mnav, btc_yield)
 p_scenarios = _apply_mnav(p_scenarios_raw, expiry_date, mnav, btc_yield)
+m_scenarios = _apply_mnav(m_scenarios_raw, expiry_date, mnav, btc_yield)
 
 # ── Spread % and Entry Price ──────────────────────────────────────────────────
 
@@ -344,16 +354,17 @@ metrics_df = build_portfolio_metrics(
     strikes, premiums, j_scenarios, b_scenarios, kelly_frac, bankroll, r_period,
     c_scenarios=c_scenarios,
     p_scenarios=p_scenarios,
+    m_scenarios=m_scenarios,
 )
 
 # ── Selected-blend E[R] and Kelly — averaged across checked models ────────────
 _er_parts  = [metrics_df[col] for flag, col in
               [(use_jacobian, "Jac E[R]"), (use_bhm, "BHM E[R]"),
-               (use_cowen, "Cowen E[R]"), (use_perrenod, "Perrenod E[R]")]
+               (use_cowen, "Cowen E[R]"), (use_perrenod, "Perrenod E[R]"), (use_marty, "Marty E[R]")]
               if flag and col in metrics_df.columns]
 _kf_parts  = [metrics_df[col] for flag, col in
               [(use_jacobian, "Jac Kelly f*"), (use_bhm, "BHM Kelly f*"),
-               (use_cowen, "Cowen Kelly f*"), (use_perrenod, "Perrenod Kelly f*")]
+               (use_cowen, "Cowen Kelly f*"), (use_perrenod, "Perrenod Kelly f*"), (use_marty, "Marty Kelly f*")]
               if flag and col in metrics_df.columns]
 
 metrics_df["Selected E[R]"]    = sum(_er_parts) / len(_er_parts)
@@ -412,7 +423,8 @@ def _build_blended_scenarios(j_scenarios: list[dict], b_scenarios: list[dict]) -
 
 _active_model_names = [n for flag, n in
                        [(use_jacobian, "Jacobian"), (use_bhm, "BHM"),
-                        (use_cowen, "Cowen"), (use_perrenod, "Perrenod")]
+                        (use_cowen, "Cowen"), (use_perrenod, "Perrenod"),
+                        (use_marty, "Marty")]
                        if flag]
 _model_lbl = " + ".join(_active_model_names)
 
@@ -421,19 +433,22 @@ _j_btc_today  = jacobian.get_btc_price(date.today())
 _b_btc_today  = _get_bhm_price(date.today())
 _c_btc_today  = cowen.get_btc_price(date.today())
 _p_btc_today  = perrenod.get_btc_price(date.today())
+_m_btc_today  = marty.get_btc_price(date.today(), _live_block_height, date.today() if _live_block_height else None)
 _j_btc_expiry = jacobian.get_btc_price(expiry_date)
 _b_btc_expiry = _get_bhm_price(expiry_date)
 _c_btc_expiry = cowen.get_btc_price(expiry_date)
 _p_btc_expiry = perrenod.get_btc_price(expiry_date)
+m_btc_expiry = marty.get_btc_price(expiry_date, _live_block_height, date.today() if _live_block_height else None)
 
 
-def _model_btc(btc_j, btc_b, btc_c, btc_p, q_label):
+def _model_btc(btc_j, btc_b, btc_c, btc_p, btc_m, q_label):
     """Return average BTC price across all checked models at a given quantile label."""
     vals = []
     if use_jacobian  and btc_j.get(q_label): vals.append(btc_j[q_label])
     if use_bhm       and btc_b.get(q_label): vals.append(btc_b[q_label])
     if use_cowen     and btc_c.get(q_label): vals.append(btc_c[q_label])
     if use_perrenod  and btc_p.get(q_label): vals.append(btc_p[q_label])
+    if use_marty     and btc_m.get(q_label): vals.append(btc_m[q_label])
     return float(np.mean(vals)) if vals else None
 
 
@@ -490,8 +505,8 @@ with tab1:
 
     today = date.today()
     # Use precomputed BTC prices from shared section
-    j_btc_today  = _j_btc_today;  b_btc_today  = _b_btc_today;  c_btc_today  = _c_btc_today;  p_btc_today  = _p_btc_today
-    j_btc_expiry = _j_btc_expiry; b_btc_expiry = _b_btc_expiry; c_btc_expiry = _c_btc_expiry; p_btc_expiry = _p_btc_expiry
+    j_btc_today  = _j_btc_today;  b_btc_today  = _b_btc_today;  c_btc_today  = _c_btc_today;  p_btc_today  = _p_btc_today;  m_btc_today  = _m_btc_today
+    j_btc_expiry = _j_btc_expiry; b_btc_expiry = _b_btc_expiry; c_btc_expiry = _c_btc_expiry; p_btc_expiry = _p_btc_expiry; m_btc_expiry = m_btc_expiry
 
     display_quantiles = ["q=0.01", "q=0.25", "OLS", "q=0.75", "q=0.99"]
     _q_nums = {"q=0.01": 0.01, "q=0.25": 0.25, "OLS": 0.50, "q=0.75": 0.75, "q=0.99": 0.99}
@@ -502,7 +517,7 @@ with tab1:
     today_q_str = None
     today_q_num = -1.0   # fallback: sorts before all quantile rows
     if btc_live:
-        _qp = [(q, _model_btc(j_btc_today, b_btc_today, c_btc_today, p_btc_today, q)) for q in display_quantiles]
+        _qp = [(q, _model_btc(j_btc_today, b_btc_today, c_btc_today, p_btc_today, m_btc_today, q)) for q in display_quantiles]
         _qp = [(q, p) for q, p in _qp if p]
         _qp.sort(key=lambda x: _q_nums[x[0]])
         if _qp:
@@ -538,9 +553,9 @@ with tab1:
     })
     # Quantile rows
     for q in display_quantiles:
-        btc_t  = _model_btc(j_btc_today, b_btc_today, c_btc_today, p_btc_today, q)
+        btc_t  = _model_btc(j_btc_today, b_btc_today, c_btc_today, p_btc_today, m_btc_today, q)
         mstr_t = _btc_to_mstr(btc_t,  today,       _current_mnav, btc_yield) if btc_t  else None
-        btc_e  = _model_btc(j_btc_expiry, b_btc_expiry, c_btc_expiry, p_btc_expiry, q)
+        btc_e  = _model_btc(j_btc_expiry, b_btc_expiry, c_btc_expiry, p_btc_expiry, m_btc_expiry, q)
         mstr_e = _btc_to_mstr(btc_e,  expiry_date, mnav, btc_yield) if btc_e  else None
         target_rows.append({
             "Scenario":   q,
@@ -572,8 +587,8 @@ with tab1:
 
     # ── Replace unselected-model E[R] cols with q=0.25 / selected avg / q=0.75 ──────
     # Point return: what you'd earn IF the MSTR price hits exactly the q=X target
-    _btc_q25_d = _model_btc(j_btc_expiry, b_btc_expiry, c_btc_expiry, p_btc_expiry, "q=0.25")
-    _btc_q75_d = _model_btc(j_btc_expiry, b_btc_expiry, c_btc_expiry, p_btc_expiry, "q=0.75")
+    _btc_q25_d = _model_btc(j_btc_expiry, b_btc_expiry, c_btc_expiry, p_btc_expiry, m_btc_expiry, "q=0.25")
+    _btc_q75_d = _model_btc(j_btc_expiry, b_btc_expiry, c_btc_expiry, p_btc_expiry, m_btc_expiry, "q=0.75")
     _mstr_q25_d = _btc_to_mstr(_btc_q25_d, expiry_date, mnav, btc_yield) if _btc_q25_d else None
     _mstr_q75_d = _btc_to_mstr(_btc_q75_d, expiry_date, mnav, btc_yield) if _btc_q75_d else None
 
@@ -592,7 +607,7 @@ with tab1:
     # Order matters: if _model_lbl == "Cowen", renaming first would create a
     # duplicate "Cowen E[R]" which the subsequent drop would then remove entirely.
     display_df = display_df.drop(
-        columns=[c for c in ["Jac E[R]", "BHM E[R]", "Blended E[R]", "Cowen E[R]", "Perrenod E[R]"]
+        columns=[c for c in ["Jac E[R]", "BHM E[R]", "Blended E[R]", "Cowen E[R]", "Perrenod E[R]", "Marty E[R]"]
                  if c in display_df.columns],
         errors="ignore",
     )
@@ -614,7 +629,7 @@ with tab1:
 
     # Same pattern: drop raw Kelly columns first, then rename Selected → "Kelly f*"
     display_df = display_df.drop(
-        columns=[c for c in ["Jac Kelly f*", "BHM Kelly f*", "Blended Kelly f*", "Cowen Kelly f*", "Perrenod Kelly f*"]
+        columns=[c for c in ["Jac Kelly f*", "BHM Kelly f*", "Blended Kelly f*", "Cowen Kelly f*", "Perrenod Kelly f*", "Marty Kelly f*"]
                  if c in display_df.columns],
         errors="ignore",
     )
@@ -708,6 +723,15 @@ with tab2:
         fig_btc.add_trace(go.Scatter(
             x=proj_dates, y=prices_p, name=f"Perrenod {q}",
             line=dict(color=color, dash="longdash"), mode="lines"
+        ))
+
+    m_quants_to_plot = ["q=0.01", "q=0.25", "OLS", "q=0.75", "q=0.99"]
+    colors_m = ["#8b0000", "#cd853f", "#daa520", "#6b8e23", "#2e8b57"]  # earthy greens/golds
+    for q, color in zip(m_quants_to_plot, colors_m):
+        prices_m = [marty.get_btc_price(d, _live_block_height, date.today() if _live_block_height else None).get(q, 0) for d in proj_dates]
+        fig_btc.add_trace(go.Scatter(
+            x=proj_dates, y=prices_m, name=f"Marty {q}",
+            line=dict(color=color, dash="dashdot"), mode="lines"
         ))
 
     # add_vline needs string dates when x-axis uses date objects
@@ -1141,6 +1165,7 @@ with tab6:
         use_bhm=use_bhm,
         use_cowen=use_cowen,
         use_perrenod=use_perrenod,
+        use_marty=use_marty,
         mnav=mnav,
         asst_mnav=asst_mnav,
         btc_yield=btc_yield,

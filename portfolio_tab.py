@@ -160,9 +160,10 @@ def _blend_btc(
     use_c: bool,
     bhm_fn: Callable,
     use_p: bool = False,
+    use_m: bool = False,
 ) -> float:
     """Average BTC price at *target* across checked models for *quantile*."""
-    from models import perrenod as _perrenod
+    from models import perrenod as _perrenod, marty as _marty
     vals = []
     if use_j:
         vals.append(jacobian.get_btc_price(target).get(quantile, 0.0))
@@ -172,6 +173,8 @@ def _blend_btc(
         vals.append(cowen.get_btc_price(target).get(quantile, 0.0))
     if use_p:
         vals.append(_perrenod.get_btc_price(target).get(quantile, 0.0))
+    if use_m:
+        vals.append(_marty.get_btc_price(target).get(quantile, 0.0))
     return float(np.mean(vals)) if vals else 0.0
 
 
@@ -206,6 +209,7 @@ def render_portfolio_tab(
     use_bhm: bool,
     use_cowen: bool,
     use_perrenod: bool,
+    use_marty: bool,
     mnav: float,
     asst_mnav: float,
     btc_yield: float,
@@ -405,7 +409,7 @@ def render_portfolio_tab(
     _expiry_vals: dict = {}   # key: (symbol, quantile) → float
     for quant in _QUANTILES:
         for c in calls:
-            btc_e = _blend_btc(c["expiry"], quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn, use_p=use_perrenod)
+            btc_e = _blend_btc(c["expiry"], quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn, use_p=use_perrenod, use_m=use_marty)
             if c["underlying"] == "MSTR":
                 S_e = btc_to_mstr_fn(btc_e, c["expiry"], mnav, btc_yield) if btc_e > 0 else 0.0
             else:
@@ -424,7 +428,7 @@ def render_portfolio_tab(
 
         for quant in _QUANTILES:
             # Projected BTC and MSTR
-            btc = _blend_btc(qdate, quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn, use_p=use_perrenod)
+            btc = _blend_btc(qdate, quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn, use_p=use_perrenod, use_m=use_marty)
             mstr_proj = btc_to_mstr_fn(btc, qdate, mnav, btc_yield) if btc > 0 else 0.0
 
             # ASST: scale proportionally to BTC
@@ -551,7 +555,7 @@ def render_portfolio_tab(
 
     breakdown_rows = []
     for qdate in q_dates:
-        btc = _blend_btc(qdate, sel_quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn, use_p=use_perrenod)
+        btc = _blend_btc(qdate, sel_quant, use_jacobian, use_bhm, use_cowen, bhm_price_fn, use_p=use_perrenod, use_m=use_marty)
         mstr_proj  = btc_to_mstr_fn(btc, qdate, mnav, btc_yield) if btc > 0 else 0.0
         asst_proj  = btc_to_asst_fn(btc, qdate, asst_mnav, asst_btc_yield) if btc > 0 else 0.0
 
@@ -634,7 +638,7 @@ def render_portfolio_tab(
                 val = _expiry_vals[(sym, opt_quant)]
             else:
                 btc = _blend_btc(qdate, opt_quant, use_jacobian, use_bhm, use_cowen,
-                                  bhm_price_fn, use_p=use_perrenod)
+                                  bhm_price_fn, use_p=use_perrenod, use_m=use_marty)
                 if opt_pos["underlying"] == "MSTR":
                     S = btc_to_mstr_fn(btc, qdate, mnav, btc_yield) if btc > 0 else 0.0
                 else:
@@ -766,7 +770,7 @@ def render_portfolio_tab(
         # BTC price at heat_date for this quantile
         btc_h = _blend_btc(heat_date, quant,
                            use_jacobian, use_bhm, use_cowen, bhm_price_fn,
-                           use_p=use_perrenod)
+                           use_p=use_perrenod, use_m=use_marty)
         # BTC at each option expiry (needed for post-expiry intrinsic)
         btc_exp_cache: dict[date, float] = {}
         for c in calls:
