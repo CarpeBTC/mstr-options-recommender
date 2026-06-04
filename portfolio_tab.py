@@ -101,9 +101,9 @@ POSITIONS: List[dict] = [
 
     # ── Bitcoin (direct / ETF) ────────────────────────────────────────────────
     dict(symbol="FBTC",           name="Fidelity Bitcoin Fund (FBTC)", category="Bitcoin",
-         ptype="btc_etf",   underlying="BTC",  shares=37.392,   quote_price=63.90,
+         ptype="btc_etf",   underlying="BTC",  shares=70.891,   quote_price=55.2249,
          strike=None, expiry=None, contracts=None,
-         cost_basis=2_383.55,   ref_mv=2_389.35),
+         cost_basis=4_233.53,   ref_mv=3_914.93),   # +33.499 sh @ $55.2249 on Jun 4 2026
 
     dict(symbol="IBIT",           name="iShares Bitcoin Trust (IBIT)", category="Bitcoin",
          ptype="btc_etf",   underlying="BTC",  shares=394.023,  quote_price=37.14,
